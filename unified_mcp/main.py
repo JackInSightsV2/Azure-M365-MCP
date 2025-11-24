@@ -364,6 +364,28 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Log file: {settings.log_file}")
 
         if settings.mcp_transport == "sse":
+            # Validate credentials for HTTP mode (where interactive auth isn't possible)
+            missing_creds = []
+            
+            # Check Azure CLI credentials
+            if not settings.has_azure_credentials():
+                logger.warning("⚠️ Azure CLI credentials missing in HTTP mode. Interactive 'az login' will not work for remote users.")
+                missing_creds.append("Azure CLI (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)")
+            
+            # Check Graph credentials
+            if settings.is_graph_read_only_mode:
+                logger.warning("⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users.")
+                missing_creds.append("Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET)")
+            elif not settings.get_graph_client_secret():
+                logger.warning("⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail unless secret is provided in arguments.")
+                missing_creds.append("Microsoft Graph Secret (GRAPH_APP_CLIENT_SECRET)")
+
+            if missing_creds:
+                logger.error("Missing required credentials for non-interactive HTTP mode:")
+                for cred in missing_creds:
+                    logger.error(f"  - {cred}")
+                logger.error("Please provide these environment variables to enable authentication.")
+
             sse = SseServerTransport("/messages")
             
             async def handle_sse(request: Request):

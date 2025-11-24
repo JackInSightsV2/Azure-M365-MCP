@@ -11,18 +11,31 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=/tmp/unified_mcp.log
       
-      # Azure CLI settings (optional - for service principal authentication)
+      # MCP Transport settings
+      # Set MCP_TRANSPORT=sse to enable HTTP mode
+      - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
+      - MCP_PORT=${MCP_PORT:-8000}
+
+      # ========================================================================
+      # AUTHENTICATION CREDENTIALS
+      # Required for HTTP/SSE mode (interactive auth not supported in HTTP)
+      # ========================================================================
+      
+      # Azure CLI Service Principal (Required for HTTP)
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
       - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
       
-      # Microsoft Graph settings (optional - for custom app registration)
+      # Microsoft Graph App Registration (Required for HTTP)
+      - GRAPH_APP_CLIENT_ID=${GRAPH_APP_CLIENT_ID:-${CUSTOM_CLIENT_ID:-}}
+      - GRAPH_APP_TENANT_ID=${GRAPH_APP_TENANT_ID:-${CUSTOM_TENANT_ID:-}}
+      - GRAPH_APP_CLIENT_SECRET=${GRAPH_APP_CLIENT_SECRET:-${CLIENT_SECRET:-}}
+      
+      # Legacy/Alternative settings
       - CUSTOM_CLIENT_ID=${CUSTOM_CLIENT_ID:-}
       - CUSTOM_TENANT_ID=${CUSTOM_TENANT_ID:-}
       - CLIENT_SECRET=${CLIENT_SECRET:-}
-      
-      # Alternative Graph settings (for compatibility)
       - USE_APP_REG_CLIENTID=${USE_APP_REG_CLIENTID:-}
       - TENANTID=${TENANTID:-}
       - GRAPH_CLIENT_SECRET=${GRAPH_CLIENT_SECRET:-}
