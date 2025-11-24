@@ -14,7 +14,8 @@ services:
       # MCP Transport settings
       # Set MCP_TRANSPORT=sse to enable HTTP mode
       - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
-      - MCP_PORT=${MCP_PORT:-8000}
+      # Container always binds to port 8000; host port is customizable via port mapping
+      - MCP_PORT=8000
 
       # ========================================================================
       # AUTHENTICATION CREDENTIALS
@@ -48,10 +49,6 @@ services:
       - OPERATION_TIMEOUT=${OPERATION_TIMEOUT:-300}
       - MAX_CONCURRENT_COMMANDS=${MAX_CONCURRENT_COMMANDS:-5}
       - MAX_CONCURRENT_OPERATIONS=${MAX_CONCURRENT_OPERATIONS:-5}
-
-      # MCP Transport settings
-      - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
-      - MCP_PORT=${MCP_PORT:-8000}
     
     ports:
       - "${MCP_PORT:-8000}:8000"
