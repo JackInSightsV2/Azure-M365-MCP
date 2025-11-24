@@ -45,6 +45,11 @@ USER app
 ENV PYTHONPATH=/app
 ENV LOG_LEVEL=INFO
 ENV LOG_FILE=/tmp/unified_mcp.log
+ENV MCP_TRANSPORT=stdio
+ENV MCP_PORT=8000
+
+# Expose the MCP port (if running in SSE mode)
+EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

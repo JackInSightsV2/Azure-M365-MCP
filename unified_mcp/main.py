@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp.types import (
     Resource, 
     Tool, 
@@ -16,6 +17,10 @@ from mcp.types import (
     ImageContent, 
     EmbeddedResource
 )
+import uvicorn
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.requests import Request
 
 from unified_mcp.config import Settings
 from unified_mcp.services.azure_cli_service import AzureCliService
@@ -358,13 +363,40 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Log level: {settings.log_level}")
         logger.info(f"Log file: {settings.log_file}")
 
-        # Run the server with stdio transport
-        async with stdio_server() as streams:
-            await server.run(
-                streams[0],  # read stream
-                streams[1],  # write stream
-                server.create_initialization_options(),
+        if settings.mcp_transport == "sse":
+            sse = SseServerTransport("/messages")
+            
+            async def handle_sse(request: Request):
+                async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+                    await server.run(
+                        streams[0], 
+                        streams[1], 
+                        server.create_initialization_options()
+                    )
+
+            async def handle_messages(request: Request):
+                await sse.handle_post_message(request.scope, request.receive, request._send)
+
+            starlette_app = Starlette(
+                routes=[
+                    Route("/sse", endpoint=handle_sse),
+                    Route("/messages", endpoint=handle_messages, methods=["POST"])
+                ],
+                debug=True
             )
+            
+            logger.info(f"Starting SSE server on port {settings.mcp_port}")
+            config = uvicorn.Config(starlette_app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
+            server_instance = uvicorn.Server(config)
+            await server_instance.serve()
+        else:
+            # Run the server with stdio transport
+            async with stdio_server() as streams:
+                await server.run(
+                    streams[0],  # read stream
+                    streams[1],  # write stream
+                    server.create_initialization_options(),
+                )
 
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")

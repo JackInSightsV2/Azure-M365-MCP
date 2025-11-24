@@ -32,7 +32,14 @@ services:
       - OPERATION_TIMEOUT=${OPERATION_TIMEOUT:-300}
       - MAX_CONCURRENT_COMMANDS=${MAX_CONCURRENT_COMMANDS:-5}
       - MAX_CONCURRENT_OPERATIONS=${MAX_CONCURRENT_OPERATIONS:-5}
+
+      # MCP Transport settings
+      - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
+      - MCP_PORT=${MCP_PORT:-8000}
     
+    ports:
+      - "${MCP_PORT:-8000}:8000"
+
     volumes:
       # Mount logs directory for persistent logging
       - ./logs:/tmp/logs

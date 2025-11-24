@@ -121,7 +121,8 @@ class Settings(BaseSettings):
     
     # MCP settings
     mcp_server_enabled: bool = True
-    mcp_server_stdio: bool = True
+    mcp_transport: str = Field(default="stdio", alias="MCP_TRANSPORT")  # "stdio" or "sse"
+    mcp_port: int = Field(default=8000, alias="MCP_PORT")
     mcp_server_name: str = "unified-microsoft-mcp"
 
     # Logging

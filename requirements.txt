@@ -14,8 +14,6 @@ httpx>=0.25.0
 # File handling
 aiofiles>=23.2.1
 
-# Logging (built-in to Python, but listing for completeness)
-# logging (built-in)
-
-# Async support (built-in to Python 3.11+)
-# asyncio (built-in) 
+# HTTP Server dependencies
+starlette>=0.35.0
+uvicorn>=0.27.0
