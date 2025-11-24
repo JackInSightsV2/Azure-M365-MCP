@@ -26,14 +26,11 @@ from unified_mcp.config import Settings
 from unified_mcp.services.azure_cli_service import AzureCliService
 from unified_mcp.services.graph_service import GraphService
 
-# Configure logging
+# Basic logging setup (will be reconfigured in main() with settings)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('unified_mcp.log'),
-        logging.StreamHandler(sys.stderr)
-    ]
+    handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger(__name__)
 
@@ -102,8 +99,36 @@ async def main() -> None:
     global azure_cli_service, graph_service
 
     try:
-        # Initialize settings and services
+        # Initialize settings first
         settings = Settings()
+        
+        # Configure logging with settings (log file and log level)
+        log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        
+        # Remove existing file handlers to avoid duplicates
+        root_logger.handlers = [h for h in root_logger.handlers if not isinstance(h, logging.FileHandler)]
+        
+        # Add file handler with configured log file path
+        file_handler = logging.FileHandler(settings.log_file)
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
+        
+        # Ensure stderr handler exists and is configured
+        stderr_handlers = [h for h in root_logger.handlers if isinstance(h, logging.StreamHandler) and h.stream == sys.stderr]
+        if not stderr_handlers:
+            stderr_handler = logging.StreamHandler(sys.stderr)
+            stderr_handler.setLevel(log_level)
+            stderr_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            root_logger.addHandler(stderr_handler)
+        else:
+            # Update existing stderr handler level
+            for h in stderr_handlers:
+                h.setLevel(log_level)
+        
+        # Initialize services
         azure_cli_service = AzureCliService(settings)
         graph_service = GraphService(settings)
 
