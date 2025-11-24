@@ -23,7 +23,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create a non-root user
-RUN useradd --create-home --shell /bin/bash app
+RUN useradd --create-home --shell /bin/bash app \
+    && mkdir -p /tmp/.azure \
+    && chown app:app /tmp/.azure
 
 # Copy the application
 COPY unified_mcp/ ./unified_mcp/
@@ -38,6 +40,7 @@ USER app
 ENV PYTHONPATH=/app
 ENV LOG_LEVEL=INFO
 ENV LOG_FILE=/tmp/unified_mcp.log
+ENV AZURE_CONFIG_DIR=/tmp/.azure
 ENV MCP_TRANSPORT=stdio
 ENV MCP_PORT=8000
 

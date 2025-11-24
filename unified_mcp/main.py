@@ -19,8 +19,9 @@ from mcp.types import (
 )
 import uvicorn
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from unified_mcp.config import Settings
 from unified_mcp.services.azure_cli_service import AzureCliService
@@ -434,7 +435,7 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     logger.error(f"  - {cred}")
                 logger.error("Please provide these environment variables to enable authentication.")
 
-            sse = SseServerTransport("/sse")
+            sse = SseServerTransport("/messages/")
             
             async def handle_sse(request: Request):
                 async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
@@ -443,14 +444,13 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                         streams[1], 
                         server.create_initialization_options()
                     )
-
-            async def handle_messages(request: Request):
-                await sse.handle_post_message(request.scope, request.receive, request._send)
+                # Return empty response to avoid NoneType error when client disconnects
+                return PlainTextResponse("")
 
             starlette_app = Starlette(
                 routes=[
                     Route("/sse", endpoint=handle_sse),
-                    Route("/messages", endpoint=handle_messages, methods=["POST"])
+                    Mount("/messages/", app=sse.handle_post_message),
                 ],
                 debug=settings.log_level == "DEBUG"
             )
