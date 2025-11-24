@@ -22,10 +22,13 @@ services:
       # ========================================================================
       
       # Azure CLI Service Principal (Required for HTTP)
-      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
-      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - AZURE_APP_TENANT_ID=${AZURE_APP_TENANT_ID:-}
+      - AZURE_APP_CLIENT_ID=${AZURE_APP_CLIENT_ID:-}
+      - AZURE_APP_CLIENT_SECRET=${AZURE_APP_CLIENT_SECRET:-}
       - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:-}
+      
+      # Shared App Registration (uses Azure CLI creds for Graph API)
+      - SHARE_APP_REGISTRATION=${SHARE_APP_REGISTRATION:-false}
       
       # Microsoft Graph App Registration (Required for HTTP)
       - GRAPH_APP_CLIENT_ID=${GRAPH_APP_CLIENT_ID:-${CUSTOM_CLIENT_ID:-}}

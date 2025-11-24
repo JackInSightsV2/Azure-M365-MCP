@@ -1,0 +1,31 @@
+# Option 1: Simple format (what we tried)
+{
+  "mcpServers": {
+    "unified-microsoft-mcp": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+
+# Option 2: With explicit transport type
+{
+  "mcpServers": {
+    "unified-microsoft-mcp": {
+      "transport": {
+        "type": "sse",
+        "url": "http://localhost:8000/sse"
+      }
+    }
+  }
+}
+
+# Option 3: Alternative structure
+{
+  "mcpServers": {
+    "unified-microsoft-mcp": {
+      "sse": {
+        "url": "http://localhost:8000/sse"
+      }
+    }
+  }
+}
