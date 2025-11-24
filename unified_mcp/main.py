@@ -228,10 +228,11 @@ The Azure CLI tool supports multiple authentication methods:
 
 2. **Service Principal (For automated operations)**
    - Set environment variables:
-     - `AZURE_TENANT_ID`: Your Azure AD tenant ID
-     - `AZURE_CLIENT_ID`: Your service principal client ID
-     - `AZURE_CLIENT_SECRET`: Your service principal client secret
+     - `AZURE_APP_TENANT_ID`: Your Azure AD tenant ID
+     - `AZURE_APP_CLIENT_ID`: Your service principal client ID
+     - `AZURE_APP_CLIENT_SECRET`: Your service principal client secret
      - `AZURE_SUBSCRIPTION_ID`: Your Azure subscription ID (optional)
+   - **Shared App Registration**: Set `SHARE_APP_REGISTRATION=true` to use these same credentials for Microsoft Graph API
 
 ## Examples
 
@@ -284,10 +285,20 @@ The Graph tool supports two authentication modes:
 
 ## Configuration
 
-Set these environment variables:
-- `CUSTOM_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
-- `CUSTOM_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
-- `CLIENT_SECRET`: Your client secret (optional, for app permissions)
+### Option 1: Separate Credentials (Default)
+Set these environment variables for Graph API:
+- `GRAPH_APP_CLIENT_ID` or `CUSTOM_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
+- `GRAPH_APP_TENANT_ID` or `CUSTOM_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
+- `GRAPH_APP_CLIENT_SECRET` or `CLIENT_SECRET`: Your client secret (optional, for app permissions)
+
+### Option 2: Shared App Registration (Recommended)
+To use the same app registration for both Azure CLI and Graph API, set:
+- `SHARE_APP_REGISTRATION=true`: Enables credential sharing between Azure CLI and Graph API
+- `AZURE_APP_TENANT_ID`: Your Azure AD tenant ID (shared)
+- `AZURE_APP_CLIENT_ID`: Your Azure AD application client ID (shared)
+- `AZURE_APP_CLIENT_SECRET`: Your client secret (shared)
+
+When `SHARE_APP_REGISTRATION=true`, Graph API will automatically use the Azure CLI credentials if Graph-specific credentials are not provided. This eliminates the need to set duplicate environment variables.
 
 ## Examples
 
@@ -362,6 +373,8 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Available tools: {azure_cli_tool.name}, {graph_tool.name}")
         logger.info(f"Log level: {settings.log_level}")
         logger.info(f"Log file: {settings.log_file}")
+        if settings.share_app_registration:
+            logger.info("✅ Shared app registration enabled: Graph API will use Azure CLI credentials")
 
         if settings.mcp_transport == "sse":
             # Validate credentials for HTTP mode (where interactive auth isn't possible)
@@ -370,15 +383,25 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
             # Check Azure CLI credentials
             if not settings.has_azure_credentials():
                 logger.warning("⚠️ Azure CLI credentials missing in HTTP mode. Interactive 'az login' will not work for remote users.")
-                missing_creds.append("Azure CLI (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)")
+                missing_creds.append("Azure CLI (AZURE_APP_TENANT_ID, AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET)")
             
             # Check Graph credentials
-            if settings.is_graph_read_only_mode:
-                logger.warning("⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users.")
-                missing_creds.append("Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET)")
-            elif not settings.get_graph_client_secret():
-                logger.warning("⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail unless secret is provided in arguments.")
-                missing_creds.append("Microsoft Graph Secret (GRAPH_APP_CLIENT_SECRET)")
+            if settings.share_app_registration:
+                # When sharing is enabled, Graph will use Azure credentials if available
+                if settings.has_azure_credentials():
+                    logger.info("✅ Using shared app registration: Graph API will use Azure CLI credentials")
+                else:
+                    logger.warning("⚠️ Shared app registration enabled but Azure CLI credentials missing. Graph API will fall back to read-only mode.")
+                    missing_creds.append("Azure CLI credentials (required when SHARE_APP_REGISTRATION=true)")
+            else:
+                # Separate credentials mode
+                if settings.is_graph_read_only_mode:
+                    logger.warning("⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users.")
+                    logger.info("💡 Tip: Set SHARE_APP_REGISTRATION=true to use Azure CLI credentials for Graph API")
+                    missing_creds.append("Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET) or enable SHARE_APP_REGISTRATION")
+                elif not settings.get_graph_client_secret():
+                    logger.warning("⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail unless secret is provided in arguments.")
+                    missing_creds.append("Microsoft Graph Secret (GRAPH_APP_CLIENT_SECRET)")
 
             if missing_creds:
                 logger.error("Missing required credentials for non-interactive HTTP mode:")
@@ -404,7 +427,7 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     Route("/sse", endpoint=handle_sse),
                     Route("/messages", endpoint=handle_messages, methods=["POST"])
                 ],
-                debug=True
+                debug=settings.log_level == "DEBUG"
             )
             
             logger.info(f"Starting SSE server on port {settings.mcp_port}")
