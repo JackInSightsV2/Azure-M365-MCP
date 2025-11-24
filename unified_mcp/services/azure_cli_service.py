@@ -69,7 +69,9 @@ class AzureCliService:
                 credentials_json = self.settings.get_azure_credentials_json()
                 if credentials_json:
                     auth_result = await self._authenticate(credentials_json)
-                    if auth_result and "Error" not in auth_result:
+                    # Check if authentication succeeded by verifying the result doesn't start with "Error:"
+                    # The _authenticate method returns "Error: ..." on failure, so we check the prefix
+                    if auth_result and not auth_result.startswith("Error:"):
                         self._authenticated = True
                         self.logger.info("Successfully authenticated with Azure CLI")
                     else:

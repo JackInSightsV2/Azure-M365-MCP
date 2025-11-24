@@ -150,6 +150,18 @@ class Settings(BaseSettings):
             return "INFO"  # Default to INFO for invalid values
         return v.upper()
 
+    @field_validator("mcp_transport")
+    @classmethod
+    def validate_mcp_transport(cls, v: str) -> str:
+        """Validate MCP transport mode."""
+        valid_transports = ["stdio", "sse"]
+        v_lower = v.lower()
+        if v_lower not in valid_transports:
+            raise ValueError(
+                f"Invalid MCP transport mode: '{v}'. Must be one of: {', '.join(valid_transports)}"
+            )
+        return v_lower
+
     @field_validator("graph_scopes")
     @classmethod
     def validate_graph_scopes(cls, v: list[str]) -> list[str]:
