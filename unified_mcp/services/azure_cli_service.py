@@ -19,6 +19,7 @@ class AzureCliService:
         """Initialize Azure CLI service."""
         self.settings = settings
         self.login_handler = AzureLoginHandler()
+        self._authenticated = False  # Track authentication status
 
         # Set up logger
         self.logger = logging.getLogger(__name__)
@@ -59,6 +60,22 @@ class AzureCliService:
 
         # Sanitize command
         sanitized_command = self._sanitize_command(command)
+
+        # Auto-authenticate if credentials are available and not already authenticated
+        # Skip if this is already a login command
+        if not sanitized_command.startswith("az login") and not self._authenticated:
+            if self.settings.has_azure_credentials():
+                self.logger.info("Auto-authenticating with service principal credentials")
+                credentials_json = self.settings.get_azure_credentials_json()
+                if credentials_json:
+                    auth_result = await self._authenticate(credentials_json)
+                    # Check if authentication succeeded by verifying the result doesn't start with "Error:"
+                    # The _authenticate method returns "Error: ..." on failure, so we check the prefix
+                    if auth_result and not auth_result.startswith("Error:"):
+                        self._authenticated = True
+                        self.logger.info("Successfully authenticated with Azure CLI")
+                    else:
+                        self.logger.warning(f"Authentication may have failed: {auth_result}")
 
         try:
             output = await self._run_azure_cli_command(sanitized_command)
@@ -124,7 +141,26 @@ class AzureCliService:
                 f"--username {client_id} --password {client_secret}"
             )
 
-            result = await self._run_azure_cli_command(login_command)
+            # Use direct command execution for service principal (bypass device code handler)
+            self.logger.info(f"Authenticating with service principal: {client_id}")
+            process = await asyncio.create_subprocess_shell(
+                login_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=True,
+            )
+
+            stdout, stderr = await process.communicate()
+
+            stdout_text = stdout.decode("utf-8") if stdout else ""
+            stderr_text = stderr.decode("utf-8") if stderr else ""
+
+            if process.returncode != 0:
+                error_msg = stderr_text if stderr_text else "Authentication failed"
+                self.logger.error(f"Azure CLI authentication failed: {error_msg}")
+                return f"Error: {error_msg}"
+
+            result = stdout_text if stdout_text else "Authentication successful"
             self.logger.info(f"Azure CLI login result: {result}")
             return result
 
@@ -137,7 +173,9 @@ class AzureCliService:
 
     async def _run_azure_cli_command(self, command: str) -> str:
         """Run Azure CLI command asynchronously."""
-        if command.startswith("az login"):
+        # Only use device code handler for interactive login (without service-principal flag)
+        # Service principal login should go through normal command execution
+        if command.startswith("az login") and "--service-principal" not in command:
             return await self.login_handler.handle_az_login_command(command)
 
         self.logger.info(f"Running Azure CLI command: {command}")

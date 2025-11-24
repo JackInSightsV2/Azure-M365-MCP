@@ -42,12 +42,20 @@ class Settings(BaseSettings):
         logger.info(f"GRAPH_APP_TENANT_ID: {os.getenv('GRAPH_APP_TENANT_ID', 'NOT SET')}")
         graph_secret_set = bool(os.getenv('GRAPH_APP_CLIENT_SECRET') or os.getenv('CLIENT_SECRET') or os.getenv('GRAPH_CLIENT_SECRET'))
         logger.info(f"GRAPH_APP_CLIENT_SECRET: {'SET' if graph_secret_set else 'NOT SET'}")
+        
+        # Shared App Registration
+        share_app_reg = os.getenv('SHARE_APP_REGISTRATION', 'false').lower() == 'true'
+        logger.info(f"SHARE_APP_REGISTRATION: {share_app_reg}")
+        
         logger.info("===============================================")
         
         super().__init__(**kwargs)
 
     # Application settings
     app_name: str = "unified-microsoft-mcp"
+    
+    # Shared App Registration
+    share_app_registration: bool = Field(default=False, alias="SHARE_APP_REGISTRATION")
 
     # =============================================================================
     # AZURE CLI SETTINGS
@@ -121,7 +129,8 @@ class Settings(BaseSettings):
     
     # MCP settings
     mcp_server_enabled: bool = True
-    mcp_server_stdio: bool = True
+    mcp_transport: str = Field(default="stdio", alias="MCP_TRANSPORT")  # "stdio" or "sse"
+    mcp_port: int = Field(default=8000, alias="MCP_PORT")
     mcp_server_name: str = "unified-microsoft-mcp"
 
     # Logging
@@ -140,6 +149,18 @@ class Settings(BaseSettings):
         if v.upper() not in valid_levels:
             return "INFO"  # Default to INFO for invalid values
         return v.upper()
+
+    @field_validator("mcp_transport")
+    @classmethod
+    def validate_mcp_transport(cls, v: str) -> str:
+        """Validate MCP transport mode."""
+        valid_transports = ["stdio", "sse"]
+        v_lower = v.lower()
+        if v_lower not in valid_transports:
+            raise ValueError(
+                f"Invalid MCP transport mode: '{v}'. Must be one of: {', '.join(valid_transports)}"
+            )
+        return v_lower
 
     @field_validator("graph_scopes")
     @classmethod
@@ -192,6 +213,13 @@ class Settings(BaseSettings):
         client_id = self.custom_client_id or self.use_app_reg_clientid
         tenant_id = self.custom_tenant_id or self.tenantid
         
+        # If sharing credentials and graph creds are missing, try to use Azure creds
+        if self.share_app_registration:
+            if not client_id and self.azure_client_id:
+                client_id = self.azure_client_id
+            if not tenant_id and self.azure_tenant_id:
+                tenant_id = self.azure_tenant_id
+        
         # Check if custom app registration is configured
         if client_id and tenant_id:
             # Custom app registration mode (read/write)
@@ -216,7 +244,13 @@ class Settings(BaseSettings):
     
     def get_graph_client_secret(self) -> Optional[str]:
         """Get Microsoft Graph client secret from environment variables."""
-        return self.client_secret or self.custom_client_secret or self.graph_client_secret
+        secret = self.client_secret or self.custom_client_secret or self.graph_client_secret
+        
+        # If sharing credentials and graph secret is missing, try to use Azure secret
+        if self.share_app_registration and not secret and self.azure_client_secret:
+            return self.azure_client_secret
+            
+        return secret
     
     @computed_field
     @property
@@ -224,8 +258,16 @@ class Settings(BaseSettings):
         """Check if running Microsoft Graph in read-only mode."""
         client_id = self.use_app_reg_clientid or self.custom_client_id
         tenant_id = self.tenantid or self.custom_tenant_id
+        
+        # If sharing credentials, check if we have Azure creds
+        if self.share_app_registration:
+            if not client_id and self.azure_client_id:
+                client_id = self.azure_client_id
+            if not tenant_id and self.azure_tenant_id:
+                tenant_id = self.azure_tenant_id
+            
         return not (client_id and tenant_id)
 
 
 # Global settings instance
-settings = Settings() 
+settings = Settings()

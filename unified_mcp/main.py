@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp.types import (
     Resource, 
     Tool, 
@@ -16,19 +17,21 @@ from mcp.types import (
     ImageContent, 
     EmbeddedResource
 )
+import uvicorn
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from unified_mcp.config import Settings
 from unified_mcp.services.azure_cli_service import AzureCliService
 from unified_mcp.services.graph_service import GraphService
 
-# Configure logging
+# Basic logging setup (will be reconfigured in main() with settings)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('unified_mcp.log'),
-        logging.StreamHandler(sys.stderr)
-    ]
+    handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger(__name__)
 
@@ -97,8 +100,36 @@ async def main() -> None:
     global azure_cli_service, graph_service
 
     try:
-        # Initialize settings and services
+        # Initialize settings first
         settings = Settings()
+        
+        # Configure logging with settings (log file and log level)
+        log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        
+        # Remove existing file handlers to avoid duplicates
+        root_logger.handlers = [h for h in root_logger.handlers if not isinstance(h, logging.FileHandler)]
+        
+        # Add file handler with configured log file path
+        file_handler = logging.FileHandler(settings.log_file)
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
+        
+        # Ensure stderr handler exists and is configured
+        stderr_handlers = [h for h in root_logger.handlers if isinstance(h, logging.StreamHandler) and h.stream == sys.stderr]
+        if not stderr_handlers:
+            stderr_handler = logging.StreamHandler(sys.stderr)
+            stderr_handler.setLevel(log_level)
+            stderr_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            root_logger.addHandler(stderr_handler)
+        else:
+            # Update existing stderr handler level
+            for h in stderr_handlers:
+                h.setLevel(log_level)
+        
+        # Initialize services
         azure_cli_service = AzureCliService(settings)
         graph_service = GraphService(settings)
 
@@ -223,10 +254,11 @@ The Azure CLI tool supports multiple authentication methods:
 
 2. **Service Principal (For automated operations)**
    - Set environment variables:
-     - `AZURE_TENANT_ID`: Your Azure AD tenant ID
-     - `AZURE_CLIENT_ID`: Your service principal client ID
-     - `AZURE_CLIENT_SECRET`: Your service principal client secret
+     - `AZURE_APP_TENANT_ID`: Your Azure AD tenant ID
+     - `AZURE_APP_CLIENT_ID`: Your service principal client ID
+     - `AZURE_APP_CLIENT_SECRET`: Your service principal client secret
      - `AZURE_SUBSCRIPTION_ID`: Your Azure subscription ID (optional)
+   - **Shared App Registration**: Set `SHARE_APP_REGISTRATION=true` to use these same credentials for Microsoft Graph API
 
 ## Examples
 
@@ -279,10 +311,20 @@ The Graph tool supports two authentication modes:
 
 ## Configuration
 
-Set these environment variables:
-- `CUSTOM_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
-- `CUSTOM_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
-- `CLIENT_SECRET`: Your client secret (optional, for app permissions)
+### Option 1: Separate Credentials (Default)
+Set these environment variables for Graph API:
+- `GRAPH_APP_CLIENT_ID` or `CUSTOM_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
+- `GRAPH_APP_TENANT_ID` or `CUSTOM_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
+- `GRAPH_APP_CLIENT_SECRET` or `CLIENT_SECRET`: Your client secret (optional, for app permissions)
+
+### Option 2: Shared App Registration (Recommended)
+To use the same app registration for both Azure CLI and Graph API, set:
+- `SHARE_APP_REGISTRATION=true`: Enables credential sharing between Azure CLI and Graph API
+- `AZURE_APP_TENANT_ID`: Your Azure AD tenant ID (shared)
+- `AZURE_APP_CLIENT_ID`: Your Azure AD application client ID (shared)
+- `AZURE_APP_CLIENT_SECRET`: Your client secret (shared)
+
+When `SHARE_APP_REGISTRATION=true`, Graph API will automatically use the Azure CLI credentials if Graph-specific credentials are not provided. This eliminates the need to set duplicate environment variables.
 
 ## Examples
 
@@ -357,14 +399,74 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Available tools: {azure_cli_tool.name}, {graph_tool.name}")
         logger.info(f"Log level: {settings.log_level}")
         logger.info(f"Log file: {settings.log_file}")
+        if settings.share_app_registration:
+            logger.info("✅ Shared app registration enabled: Graph API will use Azure CLI credentials")
 
-        # Run the server with stdio transport
-        async with stdio_server() as streams:
-            await server.run(
-                streams[0],  # read stream
-                streams[1],  # write stream
-                server.create_initialization_options(),
+        if settings.mcp_transport == "sse":
+            # Validate credentials for HTTP mode (where interactive auth isn't possible)
+            missing_creds = []
+            
+            # Check Azure CLI credentials
+            if not settings.has_azure_credentials():
+                logger.warning("⚠️ Azure CLI credentials missing in HTTP mode. Interactive 'az login' will not work for remote users.")
+                missing_creds.append("Azure CLI (AZURE_APP_TENANT_ID, AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET)")
+            
+            # Check Graph credentials
+            if settings.share_app_registration:
+                # When sharing is enabled, Graph will use Azure credentials if available
+                if settings.has_azure_credentials():
+                    logger.info("✅ Using shared app registration: Graph API will use Azure CLI credentials")
+                else:
+                    logger.warning("⚠️ Shared app registration enabled but Azure CLI credentials missing. Graph API will fall back to read-only mode.")
+                    missing_creds.append("Azure CLI credentials (required when SHARE_APP_REGISTRATION=true)")
+            else:
+                # Separate credentials mode
+                if settings.is_graph_read_only_mode:
+                    logger.warning("⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users.")
+                    logger.info("💡 Tip: Set SHARE_APP_REGISTRATION=true to use Azure CLI credentials for Graph API")
+                    missing_creds.append("Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET) or enable SHARE_APP_REGISTRATION")
+                elif not settings.get_graph_client_secret():
+                    logger.warning("⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail unless secret is provided in arguments.")
+                    missing_creds.append("Microsoft Graph Secret (GRAPH_APP_CLIENT_SECRET)")
+
+            if missing_creds:
+                logger.error("Missing required credentials for non-interactive HTTP mode:")
+                for cred in missing_creds:
+                    logger.error(f"  - {cred}")
+                logger.error("Please provide these environment variables to enable authentication.")
+
+            sse = SseServerTransport("/messages/")
+            
+            async def handle_sse(request: Request):
+                async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+                    await server.run(
+                        streams[0], 
+                        streams[1], 
+                        server.create_initialization_options()
+                    )
+                # Return empty response to avoid NoneType error when client disconnects
+                return PlainTextResponse("")
+
+            starlette_app = Starlette(
+                routes=[
+                    Route("/sse", endpoint=handle_sse),
+                    Mount("/messages/", app=sse.handle_post_message),
+                ],
+                debug=settings.log_level == "DEBUG"
             )
+            
+            logger.info(f"Starting SSE server on port {settings.mcp_port}")
+            config = uvicorn.Config(starlette_app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
+            server_instance = uvicorn.Server(config)
+            await server_instance.serve()
+        else:
+            # Run the server with stdio transport
+            async with stdio_server() as streams:
+                await server.run(
+                    streams[0],  # read stream
+                    streams[1],  # write stream
+                    server.create_initialization_options(),
+                )
 
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")

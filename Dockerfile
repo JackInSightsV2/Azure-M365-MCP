@@ -9,15 +9,8 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Azure CLI
-RUN curl -sLS https://packages.microsoft.com/keys/microsoft.asc | \
-    gpg --dearmor | \
-    tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null && \
-    AZ_REPO=$(lsb_release -cs) && \
-    echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | \
-    tee /etc/apt/sources.list.d/azure-cli.list && \
-    apt-get update && \
-    apt-get install -y azure-cli && \
+# Install Azure CLI using the installation script (more reliable across Debian versions)
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
     rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -30,7 +23,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Create a non-root user
-RUN useradd --create-home --shell /bin/bash app
+RUN useradd --create-home --shell /bin/bash app \
+    && mkdir -p /tmp/.azure \
+    && chown app:app /tmp/.azure
 
 # Copy the application
 COPY unified_mcp/ ./unified_mcp/
@@ -45,6 +40,12 @@ USER app
 ENV PYTHONPATH=/app
 ENV LOG_LEVEL=INFO
 ENV LOG_FILE=/tmp/unified_mcp.log
+ENV AZURE_CONFIG_DIR=/tmp/.azure
+ENV MCP_TRANSPORT=stdio
+ENV MCP_PORT=8000
+
+# Expose the MCP port (if running in SSE mode)
+EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

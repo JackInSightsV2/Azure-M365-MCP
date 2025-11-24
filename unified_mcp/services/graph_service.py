@@ -43,7 +43,9 @@ class GraphService:
             self.logger.info("GraphService initialized in READ-ONLY mode using Microsoft Graph PowerShell public client")
         else:
             secret_source = "environment variable" if self.client_secret else "parameter prompt"
+            auth_source = "shared Azure CLI credentials" if settings.share_app_registration and settings.has_azure_credentials() else "Graph-specific credentials"
             self.logger.info(f"GraphService initialized in READ/WRITE mode using custom app: {self.auth_config['client_id']}")
+            self.logger.info(f"Authentication source: {auth_source}")
             self.logger.info(f"Client secret source: {secret_source}")
 
     def _device_code_callback(self, verification_uri: str, user_code: str, expires_in: int):
