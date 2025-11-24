@@ -161,7 +161,7 @@ unified_mcp.log
 .DS_Store
 
 # Docker
-.dockerignore
+#.dockerignore
 
 # Temporary files
 *.tmp

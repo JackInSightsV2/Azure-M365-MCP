@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "url": "http://localhost:8000/sse"
-    }
-  }
-}
