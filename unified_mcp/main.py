@@ -434,7 +434,7 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     logger.error(f"  - {cred}")
                 logger.error("Please provide these environment variables to enable authentication.")
 
-            sse = SseServerTransport("/messages")
+            sse = SseServerTransport("/sse")
             
             async def handle_sse(request: Request):
                 async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
