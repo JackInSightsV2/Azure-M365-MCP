@@ -13,7 +13,7 @@ services:
       
       # MCP Transport settings
       # Set MCP_TRANSPORT=sse to enable HTTP mode
-      # Note: MCP_PORT is set to 8000 in Dockerfile; port mapping handles host port customization
+      # Note: MCP_PORT is set to 8001 in Dockerfile; port mapping handles host port customization
       - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
 
       # ========================================================================
@@ -50,7 +50,7 @@ services:
       - MAX_CONCURRENT_OPERATIONS=${MAX_CONCURRENT_OPERATIONS:-5}
     
     ports:
-      - "${MCP_PORT:-8000}:8000"
+      - "${MCP_PORT:-8001}:8001"
 
     volumes:
       # Mount logs directory for persistent logging

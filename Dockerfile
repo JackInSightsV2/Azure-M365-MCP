@@ -42,10 +42,10 @@ ENV LOG_LEVEL=INFO
 ENV LOG_FILE=/tmp/unified_mcp.log
 ENV AZURE_CONFIG_DIR=/tmp/.azure
 ENV MCP_TRANSPORT=stdio
-ENV MCP_PORT=8000
+ENV MCP_PORT=8001
 
 # Expose the MCP port (if running in SSE mode)
-EXPOSE 8000
+EXPOSE 8001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

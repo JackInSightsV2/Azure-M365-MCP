@@ -127,7 +127,7 @@ The server supports two transport modes:
 - **stdio** (default): Standard input/output communication, supports interactive authentication
 - **sse**: HTTP Server-Sent Events mode, requires credentials in environment variables
 
-To use SSE mode, set `MCP_TRANSPORT=sse` and `MCP_PORT=8000` (or your preferred port).
+To use SSE mode, set `MCP_TRANSPORT=sse` and `MCP_PORT=8001` (or your preferred port).
 
 ### Basic Configuration (Interactive Auth)
 
@@ -277,7 +277,7 @@ When `SHARE_APP_REGISTRATION=true`, the Graph API will automatically use the Azu
 #### General Settings
 - `LOG_LEVEL`: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Default: INFO
 - `MCP_TRANSPORT`: Transport mode ("stdio" or "sse"). Default: stdio
-- `MCP_PORT`: Port for SSE mode. Default: 8000
+- `MCP_PORT`: Port for SSE mode. Default: 8001
 - `SHARE_APP_REGISTRATION`: Use same app registration for Azure CLI and Graph API (true/false). Default: false
 
 #### Azure CLI
