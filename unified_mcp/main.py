@@ -7,6 +7,8 @@ import logging
 import sys
 from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.server.sse import SseServerTransport
@@ -38,6 +40,17 @@ logger = logging.getLogger(__name__)
 # Global service instances
 azure_cli_service: Optional[AzureCliService] = None
 graph_service: Optional[GraphService] = None
+
+# Pydantic models for OpenAPI
+class AzureCliRequest(BaseModel):
+    command: str
+
+class GraphRequest(BaseModel):
+    command: str
+    method: str = "GET"
+    data: Optional[Dict[str, Any]] = None
+    client_secret: Optional[str] = None
+
 
 def create_azure_cli_tool() -> Tool:
     """Create the Azure CLI command execution tool definition."""
@@ -95,6 +108,79 @@ def create_graph_tool() -> Tool:
         }
     )
 
+async def process_tool_call(
+    name: str, 
+    arguments: Dict[str, Any],
+    azure_service: Optional[AzureCliService],
+    graph_service: Optional[GraphService]
+) -> List[TextContent]:
+    """Process tool execution requests."""
+    if name == "execute_azure_cli_command":
+        try:
+            # Check if service is initialized
+            if not azure_service:
+                return [TextContent(type="text", text="Error: Azure CLI service not initialized")]
+
+            # Validate arguments
+            if not arguments or "command" not in arguments:
+                return [TextContent(type="text", text="Error: Missing command argument")]
+
+            command = arguments["command"]
+            if not isinstance(command, str):
+                return [TextContent(type="text", text="Error: Command must be a string")]
+
+            logger.info(f"Executing Azure CLI command via MCP: {command}")
+
+            # Execute the Azure CLI command
+            result = await azure_service.execute_azure_cli(command)
+            return [TextContent(type="text", text=result)]
+
+        except Exception as e:
+            logger.error(f"Error executing Azure CLI command: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+    elif name == "graph_command":
+        try:
+            # Check if service is initialized
+            if not graph_service:
+                return [TextContent(type="text", text="Error: Graph service not initialized")]
+
+            command = arguments.get("command", "")
+            method = arguments.get("method", "GET")
+            data = arguments.get("data")
+            client_secret = arguments.get("client_secret")
+            
+            logger.info(f"Executing Graph command: {method} {command}")
+            
+            result = await graph_service.execute_command(command, method, data, client_secret)
+            
+            # Format the response
+            if result.get("success"):
+                response_text = f"✅ **Success** ({method} {command})\n\n"
+                if result.get("data"):
+                    response_text += f"```json\n{json.dumps(result['data'], indent=2)}\n```"
+                else:
+                    response_text += "Operation completed successfully."
+            else:
+                response_text = f"❌ **Error** ({method} {command})\n\n"
+                response_text += f"**Error:** {result.get('error', 'Unknown error')}\n\n"
+                
+                if result.get("auth_required") and result.get("instructions"):
+                    response_text += f"**Instructions:**\n{result['instructions']}\n\n"
+                
+                if result.get("error_details"):
+                    response_text += f"**Details:**\n```json\n{json.dumps(result['error_details'], indent=2)}\n```"
+            
+            return [TextContent(type="text", text=response_text)]
+
+        except Exception as e:
+            logger.error(f"Error executing Graph command: {e}")
+            error_text = f"❌ **Graph Tool Execution Failed**\n\n**Error:** {str(e)}"
+            return [TextContent(type="text", text=error_text)]
+
+    else:
+        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+
 async def main() -> None:
     """Main MCP server entry point."""
     global azure_cli_service, graph_service
@@ -150,71 +236,7 @@ async def main() -> None:
             name: str, arguments: Dict[str, Any]
         ) -> list[TextContent]:
             """Handle tool execution requests."""
-            if name == "execute_azure_cli_command":
-                try:
-                    # Check if service is initialized
-                    if not azure_cli_service:
-                        return [TextContent(type="text", text="Error: Azure CLI service not initialized")]
-
-                    # Validate arguments
-                    if not arguments or "command" not in arguments:
-                        return [TextContent(type="text", text="Error: Missing command argument")]
-
-                    command = arguments["command"]
-                    if not isinstance(command, str):
-                        return [TextContent(type="text", text="Error: Command must be a string")]
-
-                    logger.info(f"Executing Azure CLI command via MCP: {command}")
-
-                    # Execute the Azure CLI command
-                    result = await azure_cli_service.execute_azure_cli(command)
-                    return [TextContent(type="text", text=result)]
-
-                except Exception as e:
-                    logger.error(f"Error executing Azure CLI command: {e}")
-                    return [TextContent(type="text", text=f"Error: {str(e)}")]
-
-            elif name == "graph_command":
-                try:
-                    # Check if service is initialized
-                    if not graph_service:
-                        return [TextContent(type="text", text="Error: Graph service not initialized")]
-
-                    command = arguments.get("command", "")
-                    method = arguments.get("method", "GET")
-                    data = arguments.get("data")
-                    client_secret = arguments.get("client_secret")
-                    
-                    logger.info(f"Executing Graph command: {method} {command}")
-                    
-                    result = await graph_service.execute_command(command, method, data, client_secret)
-                    
-                    # Format the response
-                    if result.get("success"):
-                        response_text = f"✅ **Success** ({method} {command})\n\n"
-                        if result.get("data"):
-                            response_text += f"```json\n{json.dumps(result['data'], indent=2)}\n```"
-                        else:
-                            response_text += "Operation completed successfully."
-                    else:
-                        response_text = f"❌ **Error** ({method} {command})\n\n"
-                        response_text += f"**Error:** {result.get('error', 'Unknown error')}\n\n"
-                        
-                        if result.get("auth_required") and result.get("instructions"):
-                            response_text += f"**Instructions:**\n{result['instructions']}\n\n"
-                        
-                        if result.get("error_details"):
-                            response_text += f"**Details:**\n```json\n{json.dumps(result['error_details'], indent=2)}\n```"
-                    
-                    return [TextContent(type="text", text=response_text)]
-
-                except Exception as e:
-                    logger.error(f"Error executing Graph command: {e}")
-                    error_text = f"❌ **Graph Tool Execution Failed**\n\n**Error:** {str(e)}"
-                    return [TextContent(type="text", text=error_text)]
-
-            else:
-                return [TextContent(type="text", text=f"Unknown tool: {name}")]
+            return await process_tool_call(name, arguments, azure_cli_service, graph_service)
 
         @server.list_resources()  # type: ignore
         async def handle_list_resources() -> List[Resource]:
@@ -457,6 +479,51 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
             
             logger.info(f"Starting SSE server on port {settings.mcp_port}")
             config = uvicorn.Config(starlette_app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
+            server_instance = uvicorn.Server(config)
+            await server_instance.serve()
+        elif settings.mcp_transport == "openapi":
+            # OpenAPI mode using FastAPI
+            logger.info("Starting OpenAPI server...")
+            
+            app = FastAPI(
+                title="Unified Microsoft MCP API",
+                description="OpenAPI interface for Azure CLI and Microsoft Graph tools",
+                version="1.0.0"
+            )
+
+            @app.post("/execute-azure-cli")
+            async def execute_azure_cli(request: AzureCliRequest):
+                if not azure_cli_service:
+                    raise HTTPException(status_code=500, detail="Azure CLI service not initialized")
+                
+                try:
+                    logger.info(f"Executing Azure CLI command via API: {request.command}")
+                    result = await azure_cli_service.execute_azure_cli(request.command)
+                    return {"result": result}
+                except Exception as e:
+                    logger.error(f"Error executing Azure CLI command: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            @app.post("/execute-graph-command")
+            async def execute_graph_command(request: GraphRequest):
+                if not graph_service:
+                    raise HTTPException(status_code=500, detail="Graph service not initialized")
+                
+                try:
+                    logger.info(f"Executing Graph command via API: {request.method} {request.command}")
+                    result = await graph_service.execute_command(
+                        request.command, 
+                        request.method, 
+                        request.data, 
+                        request.client_secret
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(f"Error executing Graph command: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            logger.info(f"Starting FastAPI server on port {settings.mcp_port}")
+            config = uvicorn.Config(app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
             server_instance = uvicorn.Server(config)
             await server_instance.serve()
         else:

@@ -110,6 +110,49 @@ The client secret will be cached for subsequent requests in this session.
         try:
             self.logger.info(f"Executing Microsoft Graph command: {method} {command}")
             
+            # Handle Mock Mode
+            if self.settings.mock_mode:
+                self.logger.info(f"MOCK MODE: Returning fake response for '{command}'")
+                if command.strip('/') in ["me", "me/"]:
+                     return {
+                        "success": True,
+                        "data": {
+                            "displayName": "Mock User",
+                            "jobTitle": "Mock Developer",
+                            "mail": "mock@example.com",
+                            "userPrincipalName": "mock@example.com",
+                            "id": "mock-user-id"
+                        },
+                        "status_code": 200
+                    }
+                elif command.strip('/') in ["users", "users/"]:
+                     return {
+                        "success": True,
+                        "data": {
+                            "value": [
+                                {"displayName": "User One", "mail": "one@example.com"},
+                                {"displayName": "User Two", "mail": "two@example.com"}
+                            ]
+                        },
+                        "status_code": 200
+                    }
+                elif "users/" in command and method == "GET":
+                     return {
+                        "success": True,
+                        "data": {
+                            "displayName": "Specific User",
+                            "mail": "specific@example.com",
+                            "id": "specific-id"
+                        },
+                        "status_code": 200
+                     }
+                else:
+                     return {
+                        "success": True,
+                        "data": {"message": f"Mock response for {method} {command}"},
+                        "status_code": 200
+                    }
+
             # Store client secret if provided
             if client_secret:
                 self.client_secret = client_secret

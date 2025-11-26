@@ -64,7 +64,10 @@ class AzureCliService:
         # Auto-authenticate if credentials are available and not already authenticated
         # Skip if this is already a login command
         if not sanitized_command.startswith("az login") and not self._authenticated:
-            if self.settings.has_azure_credentials():
+            if self.settings.mock_mode:
+                self.logger.info("Mock mode enabled - skipping authentication")
+                self._authenticated = True
+            elif self.settings.has_azure_credentials():
                 self.logger.info("Auto-authenticating with service principal credentials")
                 credentials_json = self.settings.get_azure_credentials_json()
                 if credentials_json:
@@ -173,6 +176,47 @@ class AzureCliService:
 
     async def _run_azure_cli_command(self, command: str) -> str:
         """Run Azure CLI command asynchronously."""
+        # Handle Mock Mode
+        if self.settings.mock_mode:
+            self.logger.info(f"MOCK MODE: Returning fake response for '{command}'")
+            if command.startswith("az login"):
+                return json.dumps([
+                    {
+                        "cloudName": "AzureCloud",
+                        "homeTenantId": "fake-tenant-id",
+                        "id": "fake-subscription-id",
+                        "isDefault": True,
+                        "managedByTenants": [],
+                        "name": "Fake Subscription",
+                        "state": "Enabled",
+                        "tenantId": "fake-tenant-id",
+                        "user": {
+                            "name": "fake-service-principal",
+                            "type": "servicePrincipal"
+                        }
+                    }
+                ], indent=2)
+            elif command.startswith("az account list"):
+                return json.dumps([
+                    {
+                        "cloudName": "AzureCloud",
+                        "homeTenantId": "fake-tenant-id",
+                        "id": "fake-subscription-id",
+                        "isDefault": True,
+                        "name": "Fake Subscription",
+                        "state": "Enabled",
+                        "tenantId": "fake-tenant-id",
+                        "user": {"name": "fake-user", "type": "user"}
+                    }
+                ], indent=2)
+            elif command.startswith("az group list"):
+                 return json.dumps([
+                    {"id": "/subscriptions/fake/resourceGroups/rg1", "name": "rg1", "location": "eastus"},
+                    {"id": "/subscriptions/fake/resourceGroups/rg2", "name": "rg2", "location": "westus"}
+                ], indent=2)
+            else:
+                return f"Mock output for command: {command}"
+
         # Only use device code handler for interactive login (without service-principal flag)
         # Service principal login should go through normal command execution
         if command.startswith("az login") and "--service-principal" not in command:

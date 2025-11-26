@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_file: str = Field(default="unified_mcp.log", alias="LOG_FILE")
+    
+    # Mock Mode for Testing
+    mock_mode: bool = Field(default=False, alias="MOCK_MODE")
 
     # =============================================================================
     # VALIDATORS
@@ -154,7 +157,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_mcp_transport(cls, v: str) -> str:
         """Validate MCP transport mode."""
-        valid_transports = ["stdio", "sse"]
+        valid_transports = ["stdio", "sse", "openapi"]
         v_lower = v.lower()
         if v_lower not in valid_transports:
             raise ValueError(

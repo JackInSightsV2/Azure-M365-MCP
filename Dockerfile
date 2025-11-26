@@ -1,37 +1,55 @@
-# Unified Microsoft MCP Server - Combines Azure CLI and Microsoft Graph API
-FROM python:3.11-slim
+# Stage 1: Builder
+FROM python:3.11-slim-bookworm AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Stage 2: Final
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Install runtime dependencies and Azure CLI
+# Combine into single RUN to minimize layers and clean up effectively
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     apt-transport-https \
     lsb-release \
     gnupg \
+    ca-certificates \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -sLS https://packages.microsoft.com/keys/microsoft.asc | \
+       gpg --dearmor | \
+       tee /etc/apt/keyrings/microsoft.gpg > /dev/null \
+    && chmod go+r /etc/apt/keyrings/microsoft.gpg \
+    && echo "deb [arch=`dpkg --print-architecture` signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ `lsb_release -cs` main" | \
+       tee /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends azure-cli \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Azure CLI using the installation script (more reliable across Debian versions)
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
-    rm -rf /var/lib/apt/lists/*
+# Copy installed python packages from builder
+COPY --from=builder /install /usr/local
 
-# Create app directory
-WORKDIR /app
-
-# Copy requirements first to leverage Docker layer caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Create a non-root user
+# Create non-root user
 RUN useradd --create-home --shell /bin/bash app \
     && mkdir -p /tmp/.azure \
-    && chown app:app /tmp/.azure
+    && chown -R app:app /tmp/.azure
 
-# Copy the application
+# Copy application code
 COPY unified_mcp/ ./unified_mcp/
 COPY pyproject.toml .
 
-# Change ownership of /app to the app user AFTER copying files
+# Change ownership
 RUN chown -R app:app /app
 
 USER app
@@ -51,7 +69,5 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import unified_mcp; print('OK')" || exit 1
 
-# MCP server uses stdio transport, no port needed
-
 # Run the unified MCP server
-CMD ["python", "-m", "unified_mcp.main"] 
+CMD ["python", "-m", "unified_mcp.main"]

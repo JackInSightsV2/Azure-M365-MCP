@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # 1. MCP over HTTP (SSE) - Standard Network Mode
+  mcp-sse:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: mcp-test-sse
+    ports:
+      - "8000:8000"
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
+      - LOG_LEVEL=DEBUG
+      - MOCK_MODE=true
+      # Azure Credentials (placeholders for validation, though mocked)
+      - AZURE_APP_TENANT_ID=${AZURE_APP_TENANT_ID}
+      - AZURE_APP_CLIENT_ID=${AZURE_APP_CLIENT_ID}
+      - AZURE_APP_CLIENT_SECRET=${AZURE_APP_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - SHARE_APP_REGISTRATION=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 2. OpenAPI Mode - REST API
+  mcp-openapi:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: mcp-test-openapi
+    ports:
+      - "8001:8001"
+    environment:
+      - MCP_TRANSPORT=openapi
+      - MCP_PORT=8001
+      - LOG_LEVEL=DEBUG
+      - MOCK_MODE=true
+      # Azure Credentials
+      - AZURE_APP_TENANT_ID=${AZURE_APP_TENANT_ID}
+      - AZURE_APP_CLIENT_ID=${AZURE_APP_CLIENT_ID}
+      - AZURE_APP_CLIENT_SECRET=${AZURE_APP_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - SHARE_APP_REGISTRATION=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 3. Stdio Mode - Interactive Stream (Kept alive with -i)
+  mcp-stdio:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: mcp-test-stdio
+    # Note: Stdio doesn't use ports, mapping just for visibility/consistency
+    ports:
+      - "8002:8002" 
+    stdin_open: true # Equivalent to -i
+    tty: true        # Equivalent to -t
+    environment:
+      - MCP_TRANSPORT=stdio
+      - LOG_LEVEL=DEBUG
+      - MOCK_MODE=true
+      # Azure Credentials
+      - AZURE_APP_TENANT_ID=${AZURE_APP_TENANT_ID}
+      - AZURE_APP_CLIENT_ID=${AZURE_APP_CLIENT_ID}
+      - AZURE_APP_CLIENT_SECRET=${AZURE_APP_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - SHARE_APP_REGISTRATION=true
