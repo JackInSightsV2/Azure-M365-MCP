@@ -46,11 +46,29 @@ graph_service: Optional[GraphService] = None
 class AzureCliRequest(BaseModel):
     command: str
 
+class AzureCliResponse(BaseModel):
+    result: Any  # Can be a list, dict, or string depending on the command
+
 class GraphRequest(BaseModel):
     command: str
     method: str = "GET"
     data: Optional[Dict[str, Any]] = None
     client_secret: Optional[str] = None
+
+class GraphResponse(BaseModel):
+    success: bool = False
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    status_code: Optional[int] = None
+    error_details: Optional[Dict[str, Any]] = None
+    suggestion: Optional[str] = None
+    auth_required: Optional[bool] = None
+    verification_uri: Optional[str] = None
+    user_code: Optional[str] = None
+    expires_in: Optional[int] = None
+    instructions: Optional[str] = None
+    
+    model_config = {"extra": "allow"}  # Allow extra fields that might be returned
 
 
 def create_azure_cli_tool() -> Tool:
@@ -502,7 +520,7 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                 allow_headers=["*"],
             )
 
-            @app.post("/execute-azure-cli")
+            @app.post("/execute-azure-cli", response_model=AzureCliResponse)
             async def execute_azure_cli(request: AzureCliRequest):
                 if not azure_cli_service:
                     raise HTTPException(status_code=500, detail="Azure CLI service not initialized")
@@ -515,15 +533,15 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     # This prevents double-encoding JSON responses
                     try:
                         parsed_result = json.loads(result)
-                        return {"result": parsed_result}
+                        return AzureCliResponse(result=parsed_result)
                     except (json.JSONDecodeError, TypeError):
                         # If it's not valid JSON, return as string
-                        return {"result": result}
+                        return AzureCliResponse(result=result)
                 except Exception as e:
                     logger.error(f"Error executing Azure CLI command: {e}")
                     raise HTTPException(status_code=500, detail=str(e))
 
-            @app.post("/execute-graph-command")
+            @app.post("/execute-graph-command", response_model=GraphResponse)
             async def execute_graph_command(request: GraphRequest):
                 if not graph_service:
                     raise HTTPException(status_code=500, detail="Graph service not initialized")
@@ -536,7 +554,9 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                         request.data, 
                         request.client_secret
                     )
-                    return result
+                    # Ensure the result matches the response model structure
+                    # Use model_validate to handle missing fields gracefully
+                    return GraphResponse.model_validate(result)
                 except Exception as e:
                     logger.error(f"Error executing Graph command: {e}")
                     raise HTTPException(status_code=500, detail=str(e))
