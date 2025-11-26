@@ -6,7 +6,7 @@ A unified MCP (Model Context Protocol) server that provides access to Microsoft 
 
 - **Azure CLI Integration**: Execute any Azure CLI command to manage Azure resources
 - **Microsoft Graph API**: Full access to Microsoft 365 resources (users, groups, mail, calendars, etc.)
-- **Dual Transport Modes**: Supports both stdio (default) and HTTP/SSE transport modes
+- **Multiple Transport Modes**: Supports stdio (default), HTTP/SSE, and OpenAPI/REST transport modes
 - **Flexible Authentication**: Interactive device code flow or automated service principal authentication
 - **Shared App Registration**: Use a single app registration for both Azure CLI and Graph API
 - **Docker Ready**: Pre-built container images available on GitHub Container Registry
@@ -122,12 +122,21 @@ You can use a single Azure AD app registration for both Azure CLI and Microsoft 
 
 ### Transport Modes
 
-The server supports two transport modes:
+The server supports three transport modes:
 
 - **stdio** (default): Standard input/output communication, supports interactive authentication
 - **sse**: HTTP Server-Sent Events mode, requires credentials in environment variables
+- **openapi**: HTTP REST API mode, provides Swagger UI and standard endpoints
 
-To use SSE mode, set `MCP_TRANSPORT=sse` and `MCP_PORT=8001` (or your preferred port).
+To use SSE or OpenAPI mode, set `MCP_TRANSPORT=sse` or `MCP_TRANSPORT=openapi` and `MCP_PORT=8001` (or your preferred port).
+
+### OpenAPI Mode (REST API)
+
+When running in OpenAPI mode (`MCP_TRANSPORT=openapi`), the server exposes a standard REST API with Swagger documentation.
+
+- **Access Documentation**: Open `http://localhost:<port>/docs` (e.g., `http://localhost:8001/docs`) in your browser
+- **Interactive UI**: Use the Swagger UI to test tools and commands directly
+- **REST Endpoints**: Interact with tools via standard HTTP POST requests
 
 ### Basic Configuration (Interactive Auth)
 
@@ -276,7 +285,7 @@ When `SHARE_APP_REGISTRATION=true`, the Graph API will automatically use the Azu
 
 #### General Settings
 - `LOG_LEVEL`: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Default: INFO
-- `MCP_TRANSPORT`: Transport mode ("stdio" or "sse"). Default: stdio
+- `MCP_TRANSPORT`: Transport mode ("stdio", "sse", or "openapi"). Default: stdio
 - `MCP_PORT`: Port for SSE mode. Default: 8001
 - `SHARE_APP_REGISTRATION`: Use same app registration for Azure CLI and Graph API (true/false). Default: false
 
