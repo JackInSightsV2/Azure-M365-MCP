@@ -421,6 +421,7 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Available tools: {azure_cli_tool.name}, {graph_tool.name}")
         logger.info(f"Log level: {settings.log_level}")
         logger.info(f"Log file: {settings.log_file}")
+        logger.info(f"MCP Transport mode: {settings.mcp_transport}")
         if settings.share_app_registration:
             logger.info("✅ Shared app registration enabled: Graph API will use Azure CLI credentials")
 
