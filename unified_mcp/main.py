@@ -510,7 +510,15 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                 try:
                     logger.info(f"Executing Azure CLI command via API: {request.command}")
                     result = await azure_cli_service.execute_azure_cli(request.command)
-                    return {"result": result}
+                    
+                    # Try to parse result as JSON if it's a JSON string
+                    # This prevents double-encoding JSON responses
+                    try:
+                        parsed_result = json.loads(result)
+                        return {"result": parsed_result}
+                    except (json.JSONDecodeError, TypeError):
+                        # If it's not valid JSON, return as string
+                        return {"result": result}
                 except Exception as e:
                     logger.error(f"Error executing Azure CLI command: {e}")
                     raise HTTPException(status_code=500, detail=str(e))

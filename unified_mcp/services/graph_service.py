@@ -357,9 +357,30 @@ Please verify your client secret and try again.
                     # Handle error responses
                     try:
                         error_data = response.json()
+                        error_message = error_data.get('error', {}).get('message', response.text)
+                        
+                        # Special handling for /me endpoint with application authentication
+                        if (command.strip('/') in ["me", "me/"] and 
+                            response.status_code == 400 and 
+                            "delegated authentication" in error_message.lower() and
+                            isinstance(self.credential, ClientSecretCredential)):
+                            return {
+                                "success": False,
+                                "error": f"HTTP {response.status_code}: {error_message}",
+                                "status_code": response.status_code,
+                                "error_details": error_data,
+                                "suggestion": (
+                                    "The /me endpoint requires delegated authentication (user context). "
+                                    "Since you're using application-only authentication, try one of these alternatives:\n"
+                                    "1. Use /users/{userId} with a specific user ID\n"
+                                    "2. Use /users to list all users\n"
+                                    "3. Switch to delegated authentication if you need user-specific data"
+                                )
+                            }
+                        
                         return {
                             "success": False,
-                            "error": f"HTTP {response.status_code}: {error_data.get('error', {}).get('message', response.text)}",
+                            "error": f"HTTP {response.status_code}: {error_message}",
                             "status_code": response.status_code,
                             "error_details": error_data
                         }
