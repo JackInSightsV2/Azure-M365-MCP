@@ -529,6 +529,8 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
             await server_instance.serve()
         else:
             # Run the server with stdio transport
+            logger.warning(f"⚠️ Transport mode '{settings.mcp_transport}' not recognized, falling back to stdio mode")
+            logger.warning("⚠️ Note: stdio mode requires interactive stdin, which may not work in detached Docker containers")
             async with stdio_server() as streams:
                 await server.run(
                     streams[0],  # read stream
