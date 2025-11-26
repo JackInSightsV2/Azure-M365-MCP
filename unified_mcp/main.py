@@ -8,6 +8,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -490,6 +491,15 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                 title="Unified Microsoft MCP API",
                 description="OpenAPI interface for Azure CLI and Microsoft Graph tools",
                 version="1.0.0"
+            )
+
+            # Add CORS middleware to allow cross-origin requests
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=["*"],  # In production, replace with specific origins
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
             )
 
             @app.post("/execute-azure-cli")

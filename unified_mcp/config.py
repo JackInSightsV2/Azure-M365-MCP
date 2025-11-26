@@ -144,6 +144,20 @@ class Settings(BaseSettings):
     # VALIDATORS
     # =============================================================================
 
+    @field_validator("mock_mode", mode="before")
+    @classmethod
+    def validate_mock_mode(cls, v: Any) -> bool:
+        """Validate and parse mock mode from string or boolean."""
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            v_lower = v.lower().strip()
+            if v_lower in ("true", "1", "yes", "on"):
+                return True
+            if v_lower in ("false", "0", "no", "off", ""):
+                return False
+        return bool(v)
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:

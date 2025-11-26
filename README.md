@@ -19,6 +19,24 @@ A unified MCP (Model Context Protocol) server that provides access to Microsoft 
 - Docker installed and running
 - Access to Microsoft 365/Azure (for authentication)
 
+### ⚠️ Important: Docker Image Name
+
+**The correct Docker image name is:**
+```
+ghcr.io/jackinsightsv2/azure-m365-mcp:latest
+```
+
+**Common Mistake:** The image name matches the repository name format (`Azure-M365-MCP`), not a reversed version. 
+
+- ✅ **Correct:** `ghcr.io/jackinsightsv2/azure-m365-mcp`
+- ❌ **Wrong:** `ghcr.io/jackinsightsv2/m365-azure-mcp`
+
+The image name is derived from the GitHub repository name (`JackInSightsV2/Azure-M365-MCP`), which becomes `azure-m365-mcp` when converted to lowercase for Docker image naming.
+
+**Available Tags:**
+- `latest` - Latest build from the main branch
+- `v1.0.1`, `v1.0.0`, etc. - Specific version tags (requires GitHub Release to be published)
+
 ### Claude Desktop
 
 Add this to your `claude_desktop_config.json`:
@@ -36,7 +54,7 @@ Add this to your `claude_desktop_config.json`:
         "unified-microsoft-mcp",
         "-e",
         "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ]
     }
   }
@@ -60,7 +78,7 @@ Add this to your `~/.cursor/mcp.json`:
         "unified-microsoft-mcp",
         "-e",
         "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ],
       "env": {}
     }
@@ -172,7 +190,7 @@ If you want to avoid interactive authentication prompts or use HTTP/SSE mode, ad
         "GRAPH_APP_CLIENT_SECRET=your-graph-client-secret",
         "-e",
         "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ]
     }
   }
@@ -205,7 +223,7 @@ If you want to avoid interactive authentication prompts or use HTTP/SSE mode, ad
         "GRAPH_APP_CLIENT_SECRET=your-graph-client-secret",
         "-e",
         "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ],
       "env": {}
     }
@@ -272,7 +290,7 @@ To use a single app registration for both Azure CLI and Graph API:
         "AZURE_APP_CLIENT_SECRET=your-client-secret",
         "-e",
         "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ]
     }
   }
@@ -380,6 +398,20 @@ The docker-compose.yml includes:
 ```bash
 docker build -t unified-microsoft-mcp:latest .
 ```
+
+### Pulling Pre-built Images
+
+The pre-built images are available on GitHub Container Registry:
+
+```bash
+# Pull the latest version
+docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
+
+# Pull a specific version (requires GitHub Release to be published)
+docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:v1.0.1
+```
+
+**Note:** The image name format is `azure-m365-mcp` (matching the repository name `Azure-M365-MCP`), not `m365-azure-mcp`.
 
 ### Running Tests
 
@@ -497,10 +529,19 @@ graph_command(
 
 ### Docker Issues
 
+**Problem**: `Error response from daemon: manifest unknown` when pulling image
+- **Solution**: Verify you're using the correct image name format
+  - ✅ **Correct:** `ghcr.io/jackinsightsv2/azure-m365-mcp:latest`
+  - ❌ **Wrong:** `ghcr.io/jackinsightsv2/m365-azure-mcp:latest`
+- The image name matches the repository name (`Azure-M365-MCP`), converted to lowercase: `azure-m365-mcp`
+- For versioned images (e.g., `v1.0.1`), ensure a GitHub Release has been published for that tag
+
 **Problem**: Container exits immediately
-- **Solution**: Check logs with `docker logs unified-microsoft-mcp`
+- **Solution**: Check logs with `docker logs <container-name>`
 - Ensure environment variables are set correctly
 - Verify the image was pulled successfully
+- Check that `MCP_TRANSPORT` is set correctly (`stdio`, `sse`, or `openapi`)
+- For `openapi` mode, verify the transport mode is being recognized in the logs
 
 **Problem**: Azure CLI commands fail
 - **Solution**: Ensure Azure CLI is authenticated in the container
