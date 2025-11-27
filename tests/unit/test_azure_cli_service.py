@@ -70,10 +70,45 @@ async def test_execute_azure_cli_failure(mock_azure_cli_service):
         result = await mock_azure_cli_service.execute_azure_cli("az invalid command")
         
         assert "Error: Error message" in result
+        assert "Command: az invalid command" in result
 
 @pytest.mark.asyncio
 async def test_execute_azure_cli_invalid_input(mock_azure_cli_service):
     """Test execution with invalid input validation."""
     result = await mock_azure_cli_service.execute_azure_cli("ls -la")
     assert "Error: Invalid command" in result
+
+@pytest.mark.asyncio
+async def test_redact_sensitive_command(mock_azure_cli_service):
+    """Test sensitive command redaction."""
+    # Test password redaction
+    command = "az login --username user --password secret123"
+    redacted = mock_azure_cli_service._redact_sensitive_command(command)
+    assert "--password <REDACTED>" in redacted
+    assert "secret123" not in redacted
+    
+    # Test client-secret redaction
+    command = "az login --client-secret mysecret"
+    redacted = mock_azure_cli_service._redact_sensitive_command(command)
+    assert "--client-secret <REDACTED>" in redacted
+    assert "mysecret" not in redacted
+    
+    # Test with equals sign
+    command = "az login --password=secret123"
+    redacted = mock_azure_cli_service._redact_sensitive_command(command)
+    assert "--password=<REDACTED>" in redacted
+    assert "secret123" not in redacted
+    
+    # Test command without sensitive data remains unchanged
+    command = "az account list"
+    redacted = mock_azure_cli_service._redact_sensitive_command(command)
+    assert redacted == command
+    
+    # Test multiple sensitive flags
+    command = "az login --username user --password secret --client-secret key123"
+    redacted = mock_azure_cli_service._redact_sensitive_command(command)
+    assert "--password <REDACTED>" in redacted
+    assert "--client-secret <REDACTED>" in redacted
+    assert "secret" not in redacted
+    assert "key123" not in redacted
 

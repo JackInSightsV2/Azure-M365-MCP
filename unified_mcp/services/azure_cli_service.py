@@ -123,6 +123,28 @@ class AzureCliService:
 
         return command
 
+    def _redact_sensitive_command(self, command: str) -> str:
+        """Redact sensitive information from command for error messages."""
+        # Patterns to redact: --flag <value> or --flag=<value>
+        sensitive_flags = [
+            (r"--password\s+\S+", "--password <REDACTED>"),
+            (r"--password=\S+", "--password=<REDACTED>"),
+            (r"--client-secret\s+\S+", "--client-secret <REDACTED>"),
+            (r"--client-secret=\S+", "--client-secret=<REDACTED>"),
+            (r"--secret\s+\S+", "--secret <REDACTED>"),
+            (r"--secret=\S+", "--secret=<REDACTED>"),
+            (r"--key\s+\S+", "--key <REDACTED>"),
+            (r"--key=\S+", "--key=<REDACTED>"),
+            (r"--api-key\s+\S+", "--api-key <REDACTED>"),
+            (r"--api-key=\S+", "--api-key=<REDACTED>"),
+        ]
+        
+        redacted_command = command
+        for pattern, replacement in sensitive_flags:
+            redacted_command = re.sub(pattern, replacement, redacted_command)
+        
+        return redacted_command
+
     async def _authenticate(self, azure_credentials: str) -> Optional[str]:
         """Authenticate using service principal credentials."""
         try:
@@ -243,10 +265,10 @@ class AzureCliService:
                 self.logger.error(
                     f"Azure CLI command failed with exit code: {process.returncode}"
                 )
-                # Return stderr for error information
-                return (
-                    f"Error: {stderr_text}" if stderr_text else "Error: Command failed"
-                )
+                # Return stderr for error information, including redacted command for debugging
+                error_msg = f"Error: {stderr_text}" if stderr_text else "Error: Command failed"
+                redacted_command = self._redact_sensitive_command(command)
+                return f"Command: {redacted_command}\n{error_msg}"
 
             # Combine stdout and stderr for successful commands (warnings might be in stderr)
             output = stdout_text
@@ -257,7 +279,9 @@ class AzureCliService:
 
         except asyncio.TimeoutError as e:
             self.logger.error(f"Azure CLI command timed out: {e}")
-            return f"Error: Command timed out"
+            redacted_command = self._redact_sensitive_command(command)
+            return f"Error: Command timed out\nCommand: {redacted_command}"
         except Exception as e:
             self.logger.error(f"Error running Azure CLI command: {e}")
-            return f"Error: {str(e)}" 
+            redacted_command = self._redact_sensitive_command(command)
+            return f"Error: {str(e)}\nCommand: {redacted_command}" 
