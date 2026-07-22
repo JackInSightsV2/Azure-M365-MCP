@@ -24,17 +24,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            poetry.lock
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        env:
-          POETRY_VIRTUALENVS_CREATE: "false"
-        run: python -m pip install --upgrade pip poetry==2.4.1 && poetry install --with dev --no-interaction
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
 
-      - name: Validate project metadata and lock file
-        run: poetry check --lock
+      - name: Validate installed dependencies
+        run: python -m pip check
 
       - name: Check formatting
         run: black --check unified_mcp tests

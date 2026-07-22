@@ -1,77 +1,54 @@
 # MCP client setup
 
-The server works with any MCP client that supports stdio or Streamable HTTP. Stdio is the safest local default because the server process is private to the client. Streamable HTTP is useful when one long-running instance must serve multiple clients.
+Cursor, Antigravity, OpenCode, and Codex start the server automatically when they need it and stop it when the session ends. The configuration only tells the client what command to launch.
 
-Install the project first:
-
-```bash
-poetry install
-poetry env info --path
-```
-
-Replace `/absolute/path/to/Azure-M365-MCP` in the examples below. Keep secrets out of committed configuration: use the client's environment support, an uncommitted environment file, or your operating system's secret store.
+The examples use Docker because the image includes the server and Azure CLI. Docker creates the `unified-microsoft-mcp-azure` volume automatically, preserving Azure CLI sign-in between sessions.
 
 ## Cursor
 
-Cursor reads project configuration from `.cursor/mcp.json` and user configuration from `~/.cursor/mcp.json`.
+Add this to `.cursor/mcp.json` in a project or `~/.cursor/mcp.json` globally:
 
 ```json
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "poetry",
-      "args": ["run", "unified-microsoft-mcp"],
-      "cwd": "/absolute/path/to/Azure-M365-MCP",
-      "env": {
-        "MCP_TRANSPORT": "stdio",
-        "EXECUTION_POLICY": "read-only"
-      }
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
+      ]
     }
   }
 }
 ```
 
-Cursor also discovers a repository-root `AGENTS.md` for durable project instructions. This repository ignores local agent context so each contributor can keep their own without changing the package.
-
-Official reference: [Cursor MCP documentation](https://cursor.com/docs/context/model-context-protocol).
+Reference: [Cursor MCP documentation](https://cursor.com/docs/context/model-context-protocol).
 
 ## Google Antigravity
 
-Antigravity uses `~/.gemini/config/mcp_config.json` globally or `.agents/mcp_config.json` in a workspace.
+Add this to `.agents/mcp_config.json` in a workspace or `~/.gemini/config/mcp_config.json` globally:
 
 ```json
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "poetry",
-      "args": ["run", "unified-microsoft-mcp"],
-      "cwd": "/absolute/path/to/Azure-M365-MCP",
-      "env": {
-        "MCP_TRANSPORT": "stdio",
-        "EXECUTION_POLICY": "read-only"
-      }
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
+      ]
     }
   }
 }
 ```
 
-For a remote server Antigravity calls the endpoint field `serverUrl` (not `url`):
-
-```json
-{
-  "mcpServers": {
-    "unified-microsoft": {
-      "serverUrl": "http://127.0.0.1:8001/mcp"
-    }
-  }
-}
-```
-
-Official reference: [Antigravity MCP documentation](https://antigravity.google/docs/mcp).
+Reference: [Antigravity MCP documentation](https://antigravity.google/docs/mcp).
 
 ## OpenCode
 
-OpenCode uses `opencode.json`. Its local command is an array and its root key is `mcp`, not `mcpServers`.
+Add this to `opencode.json`:
 
 ```json
 {
@@ -80,119 +57,62 @@ OpenCode uses `opencode.json`. Its local command is an array and its root key is
     "unified-microsoft": {
       "type": "local",
       "command": [
-        "poetry",
-        "--directory",
-        "/absolute/path/to/Azure-M365-MCP",
-        "run",
-        "unified-microsoft-mcp"
+        "docker", "run", "--rm", "-i",
+        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
       ],
-      "environment": {
-        "MCP_TRANSPORT": "stdio",
-        "EXECUTION_POLICY": "read-only"
-      },
       "enabled": true
     }
   }
 }
 ```
 
-Official reference: [OpenCode MCP servers](https://opencode.ai/docs/mcp-servers/).
+Reference: [OpenCode MCP servers](https://opencode.ai/docs/mcp-servers/).
 
 ## OpenAI Codex
 
-Codex shares MCP configuration across its app, CLI, and IDE extension. Put user configuration in `~/.codex/config.toml`, or trusted project configuration in `.codex/config.toml`.
+Add this to `~/.codex/config.toml` or `.codex/config.toml` in a trusted project:
 
 ```toml
 [mcp_servers.unified_microsoft]
-command = "poetry"
-args = ["run", "unified-microsoft-mcp"]
-cwd = "/absolute/path/to/Azure-M365-MCP"
-
-[mcp_servers.unified_microsoft.env]
-MCP_TRANSPORT = "stdio"
-EXECUTION_POLICY = "read-only"
+command = "docker"
+args = [
+  "run", "--rm", "-i",
+  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
+]
 ```
 
-Codex also reads `AGENTS.md`. The MCP server publishes concise initialization instructions, so Codex receives tool-selection and credential-safety guidance during protocol initialization as well.
+Reference: [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
-Official reference: [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
+## Without Docker
 
-## Streamable HTTP
-
-Start a protected loopback server:
+Install Python 3.11–3.14, Azure CLI, and the package:
 
 ```bash
-export MCP_TRANSPORT=streamable-http
-export MCP_API_KEY="$(openssl rand -hex 32)"
-export EXECUTION_POLICY=read-only
-poetry run unified-microsoft-mcp
+python -m pip install .
 ```
 
-The MCP endpoint is `http://127.0.0.1:8001/mcp`. Cursor uses `url`; Antigravity uses `serverUrl`; OpenCode uses a remote entry; Codex uses TOML:
-
-Cursor:
+Then replace the Docker command in the relevant example with the installed executable:
 
 ```json
 {
-  "mcpServers": {
-    "unified-microsoft": {
-      "url": "http://127.0.0.1:8001/mcp",
-      "headers": {
-        "Authorization": "Bearer <MCP_API_KEY>"
-      }
-    }
-  }
+  "command": "unified-microsoft-mcp",
+  "args": []
 }
 ```
 
-Antigravity:
+For OpenCode use `"command": ["unified-microsoft-mcp"]`; for Codex use `command = "unified-microsoft-mcp"` and omit `args`.
 
-```json
-{
-  "mcpServers": {
-    "unified-microsoft": {
-      "serverUrl": "http://127.0.0.1:8001/mcp",
-      "headers": {
-        "Authorization": "Bearer <MCP_API_KEY>"
-      }
-    }
-  }
-}
-```
+## Authentication
 
-Codex:
+Start with either tool:
 
-```toml
-[mcp_servers.unified_microsoft]
-url = "http://127.0.0.1:8001/mcp"
-bearer_token_env_var = "MCP_API_KEY"
-```
+- `execute_azure_cli_command` with `az login`
+- `graph_command` with `GET me`
 
-OpenCode:
+The tool returns a device code when sign-in is required. Complete sign-in and retry the request. For unattended deployments, pass managed-identity or service-principal settings from [env.example](../env.example) instead.
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "unified-microsoft": {
-      "type": "remote",
-      "url": "http://127.0.0.1:8001/mcp",
-      "headers": {
-        "Authorization": "Bearer {env:MCP_API_KEY}"
-      },
-      "enabled": true
-    }
-  }
-}
-```
+## Remote server
 
-When a client cannot resolve bearer tokens from the environment, keep its configuration uncommitted and set an `Authorization: Bearer <MCP_API_KEY>` header. Do not expose the built-in HTTP listener directly to the internet; add TLS and an upstream identity-aware access layer.
-
-## Verify the connection
-
-After restarting the client, it should discover exactly these tools:
-
-- `execute_azure_cli_command`
-- `graph_command`
-
-Start with `az account show` and `GET me`. If either returns a device-code prompt, complete sign-in and retry the same request.
+Stdio is the normal IDE setup. If you deliberately run one shared Streamable HTTP server, configure the client with `http://127.0.0.1:8001/mcp` instead of a command. Cursor, OpenCode, and Codex call this field `url`; Antigravity calls it `serverUrl`. Set `MCP_API_KEY` on the server and configure the client to send it as a bearer token.
