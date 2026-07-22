@@ -691,20 +691,17 @@ For more endpoints, see: https://learn.microsoft.com/graph/api/overview
             )
             server_instance = uvicorn.Server(config)
             await server_instance.serve()
-        else:
+        elif settings.mcp_transport == "stdio":
             # Run the server with stdio transport
-            logger.warning(
-                f"⚠️ Transport mode '{settings.mcp_transport}' not recognized, falling back to stdio mode"
-            )
-            logger.warning(
-                "⚠️ Note: stdio mode requires interactive stdin, which may not work in detached Docker containers"
-            )
+            logger.info("Starting stdio server")
             async with stdio_server() as streams:
                 await server.run(
                     streams[0],  # read stream
                     streams[1],  # write stream
                     server.create_initialization_options(),
                 )
+        else:
+            raise RuntimeError(f"Unsupported MCP transport: {settings.mcp_transport}")
 
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")
