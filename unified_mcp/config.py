@@ -6,6 +6,16 @@ from typing import Any, Dict, Optional
 from pydantic import Field, SecretStr, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from unified_mcp.auth import (
+    AzureAuthProfile,
+    DeviceCodeProfile,
+    GraphAuthProfile,
+    InteractiveAzureProfile,
+    ManagedIdentityProfile,
+    ServicePrincipalProfile,
+)
+from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
+
 
 class Settings(BaseSettings):
     """Application settings using Pydantic for both Azure CLI and Graph services."""
@@ -41,6 +51,20 @@ class Settings(BaseSettings):
     # Command execution settings
     command_timeout: int = Field(default=300, ge=1, le=3600, alias="COMMAND_TIMEOUT")
     max_concurrent_commands: int = Field(default=5, ge=1, le=50, alias="MAX_CONCURRENT_COMMANDS")
+
+    # Tool execution authorization. The compatibility default preserves existing behavior.
+    execution_policy: ExecutionPolicyMode = Field(
+        default=ExecutionPolicyMode.UNRESTRICTED,
+        alias="EXECUTION_POLICY",
+    )
+    azure_command_allowlist: list[str] = Field(
+        default=[],
+        alias="AZURE_COMMAND_ALLOWLIST",
+    )
+    graph_request_allowlist: list[str] = Field(
+        default=[],
+        alias="GRAPH_REQUEST_ALLOWLIST",
+    )
 
     # =============================================================================
     # MICROSOFT GRAPH SETTINGS
@@ -176,6 +200,16 @@ class Settings(BaseSettings):
             return [str(origin) for origin in v]
         raise ValueError("CORS_ALLOWED_ORIGINS must be a list or comma-separated string")
 
+    @field_validator("azure_command_allowlist", "graph_request_allowlist", mode="before")
+    @classmethod
+    def validate_allowlist(cls, v: Any) -> list[str]:
+        """Parse comma-separated policy entries."""
+        if isinstance(v, str):
+            return [entry.strip() for entry in v.split(",") if entry.strip()]
+        if isinstance(v, (list, tuple, set)):
+            return [str(entry).strip() for entry in v if str(entry).strip()]
+        raise ValueError("Execution allowlists must be lists or comma-separated strings")
+
     # =============================================================================
     # AZURE CLI METHODS
     # =============================================================================
@@ -215,6 +249,21 @@ class Settings(BaseSettings):
                 credentials["subscriptionId"] = self.azure_subscription_id
             return json.dumps(credentials)
         return None
+
+    def get_azure_auth_profile(self) -> AzureAuthProfile:
+        """Resolve legacy environment variables into a typed Azure authentication profile."""
+        if self.use_managed_identity:
+            return ManagedIdentityProfile(client_id=self.managed_identity_client_id)
+        if self.has_azure_credentials():
+            assert self.azure_tenant_id is not None
+            assert self.azure_client_id is not None
+            assert self.azure_client_secret is not None
+            return ServicePrincipalProfile(
+                tenant_id=self.azure_tenant_id,
+                client_id=self.azure_client_id,
+                client_secret=self.azure_client_secret.get_secret_value(),
+            )
+        return InteractiveAzureProfile()
 
     # =============================================================================
     # MICROSOFT GRAPH METHODS
@@ -272,6 +321,37 @@ class Settings(BaseSettings):
             return self.azure_client_secret.get_secret_value()
 
         return secret.get_secret_value() if secret is not None else None
+
+    def get_graph_auth_profile(self) -> GraphAuthProfile:
+        """Resolve Graph settings into a typed authentication profile."""
+        config = self.get_graph_auth_config()
+        scopes = tuple(str(scope) for scope in config["scopes"])
+        if config["mode"] == "managed_identity":
+            return ManagedIdentityProfile(client_id=config["client_id"], scopes=scopes)
+        if config["mode"] == "custom":
+            secret = self.get_graph_client_secret()
+            if secret is None:
+                # Keep the profile typed while allowing the service to return its guided error.
+                secret = ""
+            return ServicePrincipalProfile(
+                tenant_id=str(config["tenant_id"]),
+                client_id=str(config["client_id"]),
+                client_secret=secret,
+                scopes=scopes,
+            )
+        return DeviceCodeProfile(
+            tenant_id=str(config["tenant_id"]),
+            client_id=str(config["client_id"]),
+            scopes=scopes,
+        )
+
+    def build_execution_policy(self) -> ExecutionPolicy:
+        """Build the immutable policy shared by both execution services."""
+        return ExecutionPolicy(
+            mode=self.execution_policy,
+            azure_allowlist=tuple(self.azure_command_allowlist),
+            graph_allowlist=tuple(self.graph_request_allowlist),
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

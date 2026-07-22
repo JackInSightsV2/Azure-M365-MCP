@@ -13,6 +13,7 @@ services:
       - MCP_PORT=8000
       - LOG_LEVEL=DEBUG
       - MOCK_MODE=true
+      - MCP_API_KEY=contract-test-key
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -33,6 +34,7 @@ services:
       - MCP_PORT=8001
       - LOG_LEVEL=DEBUG
       - MOCK_MODE=true
+      - MCP_API_KEY=contract-test-key
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
@@ -51,3 +53,24 @@ services:
       - MCP_TRANSPORT=stdio
       - LOG_LEVEL=DEBUG
       - MOCK_MODE=true
+
+  # 4. Legacy MCP over SSE
+  mcp-sse:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: mcp-test-sse
+    ports:
+      - "127.0.0.1:18082:8002"
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+      - LOG_LEVEL=DEBUG
+      - MOCK_MODE=true
+      - MCP_API_KEY=contract-test-key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

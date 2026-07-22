@@ -178,3 +178,9 @@ Thumbs.db
 
 
 tests/env.test
+
+# Local agent workflow context
+AGENTS.md
+CONTEXT.md
+docs/agents/
+docs/adr/

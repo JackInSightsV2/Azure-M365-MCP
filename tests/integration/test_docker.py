@@ -6,15 +6,20 @@ import time
 import httpx
 import pytest
 from mcp import ClientSession
+from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 pytestmark = pytest.mark.docker
+
+API_KEY = "contract-test-key"
+AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
 
 # Helper to check if a service is ready
 async def wait_for_service(url, timeout=30):
     start_time = time.time()
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=AUTH_HEADERS, follow_redirects=True) as client:
         while time.time() - start_time < timeout:
             try:
                 response = await client.get(url)
@@ -90,7 +95,7 @@ async def test_openapi_azure_cli_mock(docker_compose_env):
     url = "http://localhost:18081/execute-azure-cli"
     payload = {"command": "az account list"}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=AUTH_HEADERS) as client:
         response = await client.post(url, json=payload)
 
         assert (
@@ -110,7 +115,7 @@ async def test_openapi_graph_mock(docker_compose_env):
     url = "http://localhost:18081/execute-graph-command"
     payload = {"command": "me", "method": "GET"}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=AUTH_HEADERS) as client:
         response = await client.post(url, json=payload)
 
         assert (
@@ -137,6 +142,60 @@ async def test_openapi_graph_mock(docker_compose_env):
 async def test_streamable_http_container_health(docker_compose_env):
     """Test the Streamable HTTP container is accessible."""
     assert await wait_for_service("http://localhost:18080/health")
+
+
+@pytest.mark.asyncio
+async def test_openapi_execution_requires_bearer_token(docker_compose_env):
+    async with httpx.AsyncClient() as client:
+        unauthorized = await client.post(
+            "http://localhost:18081/execute-azure-cli",
+            json={"command": "az account list"},
+        )
+        forbidden_origin = await client.post(
+            "http://localhost:18081/execute-azure-cli",
+            headers={**AUTH_HEADERS, "Origin": "https://untrusted.example"},
+            json={"command": "az account list"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert forbidden_origin.status_code == 403
+
+
+async def assert_mcp_contract(session):
+    initialization = await session.initialize()
+    assert initialization.instructions
+    assert "graph_command" in initialization.instructions
+    tools = await session.list_tools()
+    assert {tool.name for tool in tools.tools} == {
+        "execute_azure_cli_command",
+        "graph_command",
+    }
+    result = await session.call_tool("graph_command", {"command": "me"})
+    assert result.isError is not True
+    assert result.content
+    assert "Mock User" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_mcp_contract(docker_compose_env):
+    async with httpx.AsyncClient(headers=AUTH_HEADERS, follow_redirects=True) as client:
+        async with streamable_http_client(
+            "http://localhost:18080/mcp",
+            http_client=client,
+        ) as (read_stream, write_stream, _session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await assert_mcp_contract(session)
+
+
+@pytest.mark.asyncio
+async def test_sse_mcp_contract(docker_compose_env):
+    assert await wait_for_service("http://localhost:18082/health")
+    async with sse_client(
+        "http://localhost:18082/sse",
+        headers=AUTH_HEADERS,
+    ) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await assert_mcp_contract(session)
 
 
 @pytest.mark.asyncio

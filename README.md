@@ -38,6 +38,8 @@ The default transport is `stdio`, bound to the MCP client's input and output. A 
 }
 ```
 
+For client-specific configuration—including Cursor, Antigravity, OpenCode, and Codex—see [MCP client setup](docs/client-setup.md).
+
 ## Tools
 
 `execute_azure_cli_command` accepts a command whose first parsed argument must be exactly `az`:
@@ -48,7 +50,7 @@ az group list
 az vm list --resource-group example-rg
 ```
 
-`execute_graph_command` accepts a Microsoft Graph v1.0-relative path, an HTTP method, and an optional JSON object:
+`graph_command` accepts a Microsoft Graph v1.0-relative path, an HTTP method, and an optional JSON object:
 
 ```text
 command: me
@@ -63,6 +65,26 @@ data: {"displayName": "New name"}
 ```
 
 Graph access is governed by the identity's configured permissions. The default delegated scopes are read-only; write operations require a custom application or managed identity with explicit application permissions.
+
+## Execution policy
+
+`EXECUTION_POLICY` adds an application-level guard before authentication or external execution:
+
+| Mode | Behavior |
+| --- | --- |
+| `unrestricted` | Compatibility default; permits every validated Azure CLI and Graph operation |
+| `read-only` | Permits recognized Azure read commands and Graph `GET`; blocks `az rest` |
+| `allowlist` | Permits only token-safe Azure prefixes and Graph method/path prefixes |
+
+For an allowlist deployment, configure comma-separated entries:
+
+```dotenv
+EXECUTION_POLICY=allowlist
+AZURE_COMMAND_ALLOWLIST=az account show,az group list,az vm list
+GRAPH_REQUEST_ALLOWLIST=GET /me,GET /users,GET /groups
+```
+
+Azure allowlist entries match parsed argument prefixes, not raw strings. Graph entries include the method and path; `GET /users` also permits descendants such as `GET /users/{id}`, but not `/users-internal`. Use `read-only` or a narrow allowlist for remote HTTP deployments. Azure RBAC and Graph permissions remain the final authorization boundaries.
 
 ## Authentication
 
@@ -152,5 +174,6 @@ Mock mode is test-only and must not be used in a real deployment.
 - Graph `429` responses are retried up to three attempts, honoring `Retry-After` up to 30 seconds.
 - Sensitive Azure CLI flag values such as passwords, secrets, and API keys are redacted from diagnostic logs.
 - The server validates that Azure commands begin with `az`; Azure RBAC remains the real authorization boundary.
+- Configured managed-identity or service-principal login must succeed before an Azure command runs; failed configured authentication never falls through to a cached CLI identity.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and deployment guidance. This project is licensed under the [MIT License](LICENSE).
