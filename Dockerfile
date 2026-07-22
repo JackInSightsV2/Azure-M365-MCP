@@ -1,5 +1,5 @@
 # Stage 1: Builder
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY unified_mcp/ ./unified_mcp/
 RUN poetry install --only main
 
 # Stage 2: Final
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 WORKDIR /app
 
