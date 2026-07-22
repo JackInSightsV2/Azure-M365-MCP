@@ -5,9 +5,34 @@ on:
     types: [ published ]
 
 jobs:
+  test:
+    name: Test release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: poetry.lock
+      - name: Install dependencies
+        env:
+          POETRY_VIRTUALENVS_CREATE: "false"
+        run: python -m pip install --upgrade pip poetry==2.4.1 && poetry install --with dev --no-interaction
+      - name: Run quality checks
+        run: |
+          poetry check --lock
+          black --check unified_mcp tests
+          ruff check unified_mcp tests
+          mypy unified_mcp
+          pytest -m "not docker"
+
   publish-docker-image:
     name: 'Build and Publish Docker Image'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    needs: test
     permissions:
       packages: write
       contents: read
@@ -36,10 +61,10 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -47,4 +72,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max 
+          cache-to: type=gha,mode=max

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   unified-microsoft-mcp:
     build:
@@ -9,16 +7,20 @@ services:
     environment:
       # General settings
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - LOG_FILE=/tmp/unified_mcp.log
+      - LOG_FILE=/tmp/logs/unified_mcp.log
       
       # MCP Transport settings
-      # Set MCP_TRANSPORT=sse to enable HTTP mode
+      # Set MCP_TRANSPORT=streamable-http to enable the recommended HTTP mode
       # Note: MCP_PORT is set to 8001 in Dockerfile; port mapping handles host port customization
       - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
+      - MCP_HOST=0.0.0.0
+      - MCP_API_KEY=${MCP_API_KEY:-}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://127.0.0.1:8001,http://localhost:8001}
 
       # ========================================================================
       # AUTHENTICATION CREDENTIALS
-      # Required for HTTP/SSE mode (interactive auth not supported in HTTP)
+      # Use managed identity in Azure, or service-principal credentials for
+      # non-interactive HTTP deployments.
       # ========================================================================
       
       # Azure CLI Service Principal (Required for HTTP)
@@ -29,6 +31,8 @@ services:
       
       # Shared App Registration (uses Azure CLI creds for Graph API)
       - SHARE_APP_REGISTRATION=${SHARE_APP_REGISTRATION:-false}
+      - USE_MANAGED_IDENTITY=${USE_MANAGED_IDENTITY:-false}
+      - MANAGED_IDENTITY_CLIENT_ID=${MANAGED_IDENTITY_CLIENT_ID:-}
       
       # Microsoft Graph App Registration (Required for HTTP)
       - GRAPH_APP_CLIENT_ID=${GRAPH_APP_CLIENT_ID:-${CUSTOM_CLIENT_ID:-}}
@@ -50,7 +54,7 @@ services:
       - MAX_CONCURRENT_OPERATIONS=${MAX_CONCURRENT_OPERATIONS:-5}
     
     ports:
-      - "${MCP_PORT:-8001}:8001"
+      - "127.0.0.1:${MCP_PORT:-8001}:8001"
 
     volumes:
       # Mount logs directory for persistent logging
@@ -58,9 +62,6 @@ services:
       
       # Mount Azure CLI config directory for persistent authentication
       - azure-cli-config:/home/app/.azure
-      
-      # Mount a directory for any additional configuration
-      - ./config:/app/config:ro
     
     # MCP uses stdio, so we need to keep the container running
     # and interact with it via stdin/stdout
@@ -72,7 +73,7 @@ services:
     
     # Health check (optional)
     healthcheck:
-      test: ["CMD", "python", "-c", "import unified_mcp; print('OK')"]
+      test: ["CMD-SHELL", "if [ \"$${MCP_TRANSPORT}\" = \"stdio\" ]; then python -c \"import unified_mcp\"; else curl --fail --silent http://127.0.0.1:8001/health >/dev/null; fi"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -95,4 +96,4 @@ volumes:
 
 networks:
   default:
-    name: unified-mcp-network 
+    name: unified-mcp-network

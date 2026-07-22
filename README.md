@@ -1,564 +1,156 @@
-# Microsoft 365 & Azure MCP Server
+# Unified Microsoft MCP Server
 
-A unified MCP (Model Context Protocol) server that provides access to Microsoft Graph API and Azure CLI through a single Docker container. This server enables AI assistants like Claude, Cursor, and Warp AI to interact with your Microsoft 365 and Azure resources seamlessly.
+An MCP server that exposes Azure CLI commands and Microsoft Graph requests through one process. It supports local stdio clients, MCP Streamable HTTP, the legacy MCP SSE transport, and a small OpenAPI interface.
 
-## ✨ Features
+The server executes Azure CLI arguments without invoking a shell, limits concurrent work, applies operation timeouts, pools Graph HTTP connections, retries Graph throttling responses, and can protect every non-health HTTP endpoint with a bearer token.
 
-- **Azure CLI Integration**: Execute any Azure CLI command to manage Azure resources
-- **Microsoft Graph API**: Full access to Microsoft 365 resources (users, groups, mail, calendars, etc.)
-- **Multiple Transport Modes**: Supports stdio (default), HTTP/SSE, and OpenAPI/REST transport modes
-- **Flexible Authentication**: Interactive device code flow or automated service principal authentication
-- **Shared App Registration**: Use a single app registration for both Azure CLI and Graph API
-- **Docker Ready**: Pre-built container images available on GitHub Container Registry
-- **Production Ready**: Includes health checks, logging, and error handling
+## Requirements
 
-## 🚀 Quick Start
+- Python 3.11–3.14
+- Azure CLI for Azure commands
+- An Azure account with only the permissions the server needs
+- Docker and Docker Compose, if using containers
 
-### Prerequisites
+## Install locally
 
-- Docker installed and running
-- Access to Microsoft 365/Azure (for authentication)
-
-### ⚠️ Important: Docker Image Name
-
-**The correct Docker image name is:**
-```
-ghcr.io/jackinsightsv2/azure-m365-mcp:latest
-```
-
-**Common Mistake:** The image name matches the repository name format (`Azure-M365-MCP`), not a reversed version. 
-
-- ✅ **Correct:** `ghcr.io/jackinsightsv2/azure-m365-mcp`
-- ❌ **Wrong:** `ghcr.io/jackinsightsv2/m365-azure-mcp`
-
-The image name is derived from the GitHub repository name (`JackInSightsV2/Azure-M365-MCP`), which becomes `azure-m365-mcp` when converted to lowercase for Docker image naming.
-
-**Available Tags:**
-- `latest` - Latest build from the main branch
-- `v1.0.1`, `v1.0.0`, etc. - Specific version tags (requires GitHub Release to be published)
-
-### Claude Desktop
-
-Add this to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        "unified-microsoft-mcp",
-        "-e",
-        "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-### Cursor
-
-Add this to your `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        "unified-microsoft-mcp",
-        "-e",
-        "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ],
-      "env": {}
-    }
-  }
-}
-```
-
-### Warp AI
-
-Add this to your Warp MCP configuration:
-
-```json
-{
-  "unified-microsoft-mcp": {
-    "command": "docker",
-    "args": [
-      "run",
-      "--rm",
-      "-i",
-      "--name",
-      "unified-microsoft-mcp",
-      "-e",
-      "LOG_LEVEL=INFO",
-      "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
-    ],
-    "env": {},
-    "working_directory": null,
-    "start_on_launch": true
-  }
-}
-```
-
-The Docker container will be automatically downloaded from GitHub Container Registry.
-
-## 🛠️ Available Tools
-
-### `execute_azure_cli_command`
-Execute Azure CLI commands for managing Azure resources. Communicate naturally - ask Claude/Cursor to "list my Azure subscriptions" or "create a resource group called MyRG in East US".
-
-### `graph_command`
-Execute Microsoft Graph API commands for managing Microsoft 365 resources. Ask naturally - "show me my profile" or "list all users in my organization".
-
-## 🔐 Authentication & Security
-
-Both tools support multiple authentication modes:
-
-### 1. Interactive Authentication (Default - Most Secure)
-When you don't provide credentials in the configuration, the server will prompt you to authenticate through your browser when first using each tool. This keeps your credentials out of configuration files.
-
-**Note**: Interactive authentication works with stdio transport mode. For HTTP/SSE mode, you must provide credentials via environment variables.
-
-### 2. Automated Authentication (Optional)
-For automated scenarios or HTTP/SSE transport mode, you can provide credentials via environment variables.
-
-### 3. Shared App Registration (Recommended)
-You can use a single Azure AD app registration for both Azure CLI and Microsoft Graph API by setting `SHARE_APP_REGISTRATION=true`. This simplifies configuration and reduces the number of credentials you need to manage.
-
-## 🔧 Configuration with Credentials
-
-### Transport Modes
-
-The server supports three transport modes:
-
-- **stdio** (default): Standard input/output communication, supports interactive authentication
-- **sse**: HTTP Server-Sent Events mode, requires credentials in environment variables
-- **openapi**: HTTP REST API mode, provides Swagger UI and standard endpoints
-
-To use SSE or OpenAPI mode, set `MCP_TRANSPORT=sse` or `MCP_TRANSPORT=openapi` and `MCP_PORT=8001` (or your preferred port).
-
-### OpenAPI Mode (REST API)
-
-When running in OpenAPI mode (`MCP_TRANSPORT=openapi`), the server exposes a standard REST API with Swagger documentation.
-
-- **Access Documentation**: Open `http://localhost:<port>/docs` (e.g., `http://localhost:8001/docs`) in your browser
-- **Interactive UI**: Use the Swagger UI to test tools and commands directly
-- **REST Endpoints**: Interact with tools via standard HTTP POST requests
-
-### Basic Configuration (Interactive Auth)
-
-No credentials needed - authentication happens interactively when tools are first used.
-
-### Advanced Configuration (Automated Auth)
-
-If you want to avoid interactive authentication prompts or use HTTP/SSE mode, add environment variables to your MCP configuration:
-
-### Claude Desktop
-```json
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        "unified-microsoft-mcp",
-        "-e",
-        "AZURE_APP_TENANT_ID=your-tenant-id",
-        "-e",
-        "AZURE_APP_CLIENT_ID=your-client-id",
-        "-e",
-        "AZURE_APP_CLIENT_SECRET=your-client-secret",
-        "-e",
-        "GRAPH_APP_CLIENT_ID=your-graph-client-id",
-        "-e",
-        "GRAPH_APP_TENANT_ID=your-graph-tenant-id",
-        "-e",
-        "GRAPH_APP_CLIENT_SECRET=your-graph-client-secret",
-        "-e",
-        "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-### Cursor
-```json
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        "unified-microsoft-mcp",
-        "-e",
-        "AZURE_APP_TENANT_ID=your-tenant-id",
-        "-e",
-        "AZURE_APP_CLIENT_ID=your-client-id",
-        "-e",
-        "AZURE_APP_CLIENT_SECRET=your-client-secret",
-        "-e",
-        "GRAPH_APP_CLIENT_ID=your-graph-client-id",
-        "-e",
-        "GRAPH_APP_TENANT_ID=your-graph-tenant-id",
-        "-e",
-        "GRAPH_APP_CLIENT_SECRET=your-graph-client-secret",
-        "-e",
-        "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ],
-      "env": {}
-    }
-  }
-}
-```
-
-### Warp AI
-```json
-{
-  "unified-microsoft-mcp": {
-    "command": "docker",
-    "args": [
-      "run",
-      "--rm",
-      "-i",
-      "--name",
-      "unified-microsoft-mcp",
-      "-e",
-      "AZURE_APP_TENANT_ID=your-tenant-id",
-      "-e",
-      "AZURE_APP_CLIENT_ID=your-client-id",
-      "-e",
-      "AZURE_APP_CLIENT_SECRET=your-client-secret",
-      "-e",
-      "GRAPH_APP_CLIENT_ID=your-graph-client-id",
-      "-e",
-      "GRAPH_APP_TENANT_ID=your-graph-tenant-id",
-      "-e",
-      "GRAPH_APP_CLIENT_SECRET=your-graph-client-secret",
-      "-e",
-      "LOG_LEVEL=INFO",
-      "ghcr.io/jackinsightsv2/m365-azure-mcp:latest"
-    ],
-    "env": {},
-    "working_directory": null,
-    "start_on_launch": true
-  }
-}
-```
-
-### Shared App Registration Configuration
-
-To use a single app registration for both Azure CLI and Graph API:
-
-```json
-{
-  "mcpServers": {
-    "unified-microsoft-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--name",
-        "unified-microsoft-mcp",
-        "-e",
-        "SHARE_APP_REGISTRATION=true",
-        "-e",
-        "AZURE_APP_TENANT_ID=your-tenant-id",
-        "-e",
-        "AZURE_APP_CLIENT_ID=your-client-id",
-        "-e",
-        "AZURE_APP_CLIENT_SECRET=your-client-secret",
-        "-e",
-        "LOG_LEVEL=INFO",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-When `SHARE_APP_REGISTRATION=true`, the Graph API will automatically use the Azure CLI credentials. Ensure your app registration has both Azure RBAC roles and Microsoft Graph API permissions configured.
-
-### Environment Variables
-
-#### General Settings
-- `LOG_LEVEL`: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Default: INFO
-- `MCP_TRANSPORT`: Transport mode ("stdio", "sse", or "openapi"). Default: stdio
-- `MCP_PORT`: Port for SSE mode. Default: 8001
-- `SHARE_APP_REGISTRATION`: Use same app registration for Azure CLI and Graph API (true/false). Default: false
-
-#### Azure CLI
-- `AZURE_APP_TENANT_ID`: Your Azure AD tenant ID
-- `AZURE_APP_CLIENT_ID`: Your service principal client ID  
-- `AZURE_APP_CLIENT_SECRET`: Your service principal client secret
-- `AZURE_SUBSCRIPTION_ID`: Your Azure subscription ID (optional)
-- `COMMAND_TIMEOUT`: Timeout for Azure CLI commands in seconds. Default: 300
-- `MAX_CONCURRENT_COMMANDS`: Maximum concurrent Azure CLI commands. Default: 5
-
-#### Microsoft Graph
-- `GRAPH_APP_CLIENT_ID`: Your app registration client ID (for read/write mode)
-- `GRAPH_APP_TENANT_ID`: Your app registration tenant ID (for read/write mode)
-- `GRAPH_APP_CLIENT_SECRET`: Your app registration client secret (for read/write mode)
-- `OPERATION_TIMEOUT`: Timeout for Graph API operations in seconds. Default: 300
-- `MAX_CONCURRENT_OPERATIONS`: Maximum concurrent Graph API operations. Default: 5
-
-**Alternative variable names** (for backward compatibility):
-- `USE_APP_REG_CLIENTID` (alternative to `GRAPH_APP_CLIENT_ID`)
-- `TENANTID` (alternative to `GRAPH_APP_TENANT_ID`)
-- `CLIENT_SECRET` (alternative to `GRAPH_APP_CLIENT_SECRET`)
-
-## 🐳 Docker Compose
-
-For local development or production deployment, you can use Docker Compose:
-
-1. Copy `env.example` to `.env`:
-   ```bash
-   cp env.example .env
-   ```
-
-2. Edit `.env` and configure your credentials
-
-3. Start the service:
-   ```bash
-   docker-compose up -d
-   ```
-
-4. View logs:
-   ```bash
-   docker-compose logs -f
-   ```
-
-The docker-compose.yml includes:
-- Persistent Azure CLI configuration volume
-- Log directory mounting
-- Health checks
-- Resource limits
-- Automatic restart policy
-
-## 💻 Local Development
-
-### Prerequisites
-
-- Python 3.11+
-- Azure CLI installed
-- Poetry (for dependency management)
-
-### Setup
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd Azure-M365-MCP
-   ```
-
-2. Install dependencies:
-   ```bash
-   poetry install
-   ```
-
-3. Copy environment file:
-   ```bash
-   cp env.example .env
-   ```
-
-4. Configure `.env` with your settings
-
-5. Run the server:
-   ```bash
-   poetry run python -m unified_mcp.main
-   ```
-
-   Or use the entry point:
-   ```bash
-   poetry run unified-microsoft-mcp
-   ```
-
-### Building the Docker Image
+Poetry is the canonical environment manager:
 
 ```bash
-docker build -t unified-microsoft-mcp:latest .
+git clone https://github.com/JackInSightsV2/Azure-M365-MCP.git
+cd Azure-M365-MCP
+poetry install
+poetry run unified-microsoft-mcp
 ```
 
-### Pulling Pre-built Images
+For pip-based environments, `pip install -e .` is also supported.
 
-The pre-built images are available on GitHub Container Registry:
+The default transport is `stdio`, bound to the MCP client's input and output. A typical MCP client configuration is:
+
+```json
+{
+  "mcpServers": {
+    "unified-microsoft": {
+      "command": "poetry",
+      "args": ["run", "unified-microsoft-mcp"],
+      "cwd": "/absolute/path/to/Azure-M365-MCP"
+    }
+  }
+}
+```
+
+## Tools
+
+`execute_azure_cli_command` accepts a command whose first parsed argument must be exactly `az`:
+
+```text
+az account show
+az group list
+az vm list --resource-group example-rg
+```
+
+`execute_graph_command` accepts a Microsoft Graph v1.0-relative path, an HTTP method, and an optional JSON object:
+
+```text
+command: me
+method: GET
+
+command: users
+method: GET
+
+command: groups/{id}
+method: PATCH
+data: {"displayName": "New name"}
+```
+
+Graph access is governed by the identity's configured permissions. The default delegated scopes are read-only; write operations require a custom application or managed identity with explicit application permissions.
+
+## Authentication
+
+Choose one approach:
+
+1. Local interactive authentication: use `stdio`, run `az login` through the Azure tool, and let Graph prompt with device-code authentication. This requires no stored client secret.
+2. Managed identity: for an Azure-hosted workload, set `USE_MANAGED_IDENTITY=true`. Set `MANAGED_IDENTITY_CLIENT_ID` only for a user-assigned identity. Assign the identity appropriate Azure RBAC roles and Microsoft Graph application permissions.
+3. Service principals: configure the `AZURE_APP_*` variables for Azure CLI and the `GRAPH_APP_*` variables for Graph. Set `SHARE_APP_REGISTRATION=true` to reuse one application registration.
+
+Never put client secrets in tool arguments. Supply them through environment variables or your platform's secret store. See [env.example](env.example) for all supported settings.
+
+## Transports
+
+| Transport | Setting | Endpoint | Intended use |
+| --- | --- | --- | --- |
+| stdio | `MCP_TRANSPORT=stdio` | process streams | Local MCP clients; safest default |
+| Streamable HTTP | `MCP_TRANSPORT=streamable-http` | `/mcp` | Current remote MCP transport |
+| SSE | `MCP_TRANSPORT=sse` | `/sse` | Legacy client compatibility |
+| OpenAPI | `MCP_TRANSPORT=openapi` | `/docs` | Direct REST integration |
+
+HTTP transports bind to `127.0.0.1` by default. To listen on another interface, explicitly set `MCP_HOST`; containers set this to `0.0.0.0` internally while Compose publishes only to host loopback.
+
+For any HTTP deployment, set a long random `MCP_API_KEY` and send it as a bearer token:
 
 ```bash
-# Pull the latest version
+export MCP_TRANSPORT=streamable-http
+export MCP_API_KEY="$(openssl rand -hex 32)"
+poetry run unified-microsoft-mcp
+```
+
+```text
+Authorization: Bearer <MCP_API_KEY>
+```
+
+`CORS_ALLOWED_ORIGINS` is a comma-separated browser origin allowlist. It protects browser-originated requests but is not authentication. `/health` remains public for readiness checks. In OpenAPI mode, `/docs`, `/redoc`, and `/openapi.json` are public, while execution endpoints require the bearer token when configured.
+
+## Docker
+
+Build and run directly:
+
+```bash
+docker build -t unified-microsoft-mcp .
+docker run --rm -i \
+  -e MCP_TRANSPORT=stdio \
+  unified-microsoft-mcp
+```
+
+Run Streamable HTTP with Compose:
+
+```bash
+cp env.example .env
+# Edit .env: set MCP_TRANSPORT=streamable-http, MCP_API_KEY, and authentication.
+docker compose up --build -d
+curl http://127.0.0.1:8001/health
+```
+
+The image runs as a non-root user. Azure CLI state is stored in `/home/app/.azure`, logs in `/tmp/logs`, and the Compose file persists both appropriately. Avoid exposing port 8001 publicly without TLS and an upstream access-control layer.
+
+Published images use:
+
+```bash
 docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
-
-# Pull a specific version (requires GitHub Release to be published)
-docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:v1.0.1
 ```
 
-**Note:** The image name format is `azure-m365-mcp` (matching the repository name `Azure-M365-MCP`), not `m365-azure-mcp`.
-
-### Running Tests
+## Development
 
 ```bash
-poetry run pytest
+poetry install
+poetry run black --check unified_mcp tests
+poetry run ruff check unified_mcp tests
+poetry run mypy unified_mcp
+poetry run pytest -m "not docker" --cov=unified_mcp
 ```
 
-## 📖 Usage Examples
-
-### Azure CLI Examples
+Docker integration tests use mock mode and do not require Azure credentials:
 
 ```bash
-# List subscriptions
-execute_azure_cli_command(command="az account list")
-
-# List resource groups
-execute_azure_cli_command(command="az group list")
-
-# Create a resource group
-execute_azure_cli_command(command="az group create --name MyRG --location eastus")
-
-# List virtual machines
-execute_azure_cli_command(command="az vm list")
-
-# Get storage accounts
-execute_azure_cli_command(command="az storage account list")
+poetry run pytest -m docker
 ```
 
-### Microsoft Graph Examples
+Mock mode is test-only and must not be used in a real deployment.
 
-```bash
-# Get current user info
-graph_command(command="me")
+## Operational notes
 
-# List all users
-graph_command(command="users")
+- `COMMAND_TIMEOUT` and `MAX_CONCURRENT_COMMANDS` bound Azure CLI execution.
+- `OPERATION_TIMEOUT` and `MAX_CONCURRENT_OPERATIONS` bound Graph calls.
+- Graph `429` responses are retried up to three attempts, honoring `Retry-After` up to 30 seconds.
+- Sensitive Azure CLI flag values such as passwords, secrets, and API keys are redacted from diagnostic logs.
+- The server validates that Azure commands begin with `az`; Azure RBAC remains the real authorization boundary.
 
-# Get specific user
-graph_command(command="users/user@domain.com")
-
-# List groups
-graph_command(command="groups")
-
-# Get user's mail
-graph_command(command="me/mailFolders/inbox/messages")
-
-# Create a user (requires client secret)
-graph_command(
-    command="users",
-    method="POST",
-    data={
-        "accountEnabled": true,
-        "displayName": "John Doe",
-        "mailNickname": "johndoe",
-        "userPrincipalName": "johndoe@yourdomain.com",
-        "passwordProfile": {
-            "forceChangePasswordNextSignIn": true,
-            "password": "TempPassword123!"
-        }
-    }
-)
-```
-
-## 🔒 Security Best Practices
-
-1. **Interactive Authentication (Recommended)**: Use the default configuration without credentials. The server will securely prompt for authentication when needed, keeping your secrets out of configuration files.
-
-2. **Environment Variables**: Only add credentials to the configuration if you need fully automated operation or are using HTTP/SSE mode.
-
-3. **Shared App Registration**: When using `SHARE_APP_REGISTRATION=true`, ensure your app registration has the minimum required permissions for both Azure CLI and Graph API operations.
-
-4. **Client Secrets**: You don't need to add secrets to environment variables if using interactive authentication. The server will prompt for them when needed.
-
-5. **HTTP/SSE Mode**: When using SSE transport mode, credentials are required as interactive authentication is not supported.
-
-## 🐛 Troubleshooting
-
-### Authentication Issues
-
-**Problem**: "Authentication failed" or "Client secret required"
-- **Solution**: Check that your client ID, tenant ID, and client secret are correct
-- Ensure you copied the secret **value**, not the secret ID
-- Verify your app registration has the required permissions
-
-**Problem**: "Device code timeout"
-- **Solution**: Complete authentication within the time limit (usually 15 minutes)
-- For automated scenarios, use service principal authentication instead
-
-**Problem**: "Permission denied" for Graph API operations
-- **Solution**: Configure appropriate API permissions in Azure Portal
-- For read/write operations, ensure your app registration has the necessary delegated or application permissions
-- If using shared app registration, ensure the app has both Azure RBAC roles and Graph API permissions
-
-### Transport Mode Issues
-
-**Problem**: Server not responding in SSE mode
-- **Solution**: Ensure `MCP_TRANSPORT=sse` and `MCP_PORT` are set correctly
-- Check that the port is not already in use
-- Verify firewall rules allow connections to the port
-
-**Problem**: Interactive auth not working in SSE mode
-- **Solution**: SSE mode requires credentials in environment variables. Interactive authentication only works with stdio transport mode.
-
-### Configuration Issues
-
-**Problem**: Graph API using wrong credentials
-- **Solution**: Check `SHARE_APP_REGISTRATION` setting
-  - If `true`, Graph uses `AZURE_APP_*` credentials
-  - If `false`, Graph uses `GRAPH_APP_*` credentials or falls back to read-only mode
-
-**Problem**: "Missing required credentials for HTTP mode"
-- **Solution**: HTTP/SSE mode requires credentials. Provide:
-  - Azure CLI: `AZURE_APP_TENANT_ID`, `AZURE_APP_CLIENT_ID`, `AZURE_APP_CLIENT_SECRET`
-  - Graph API: `GRAPH_APP_*` credentials or enable `SHARE_APP_REGISTRATION=true`
-
-### Docker Issues
-
-**Problem**: `Error response from daemon: manifest unknown` when pulling image
-- **Solution**: Verify you're using the correct image name format
-  - ✅ **Correct:** `ghcr.io/jackinsightsv2/azure-m365-mcp:latest`
-  - ❌ **Wrong:** `ghcr.io/jackinsightsv2/m365-azure-mcp:latest`
-- The image name matches the repository name (`Azure-M365-MCP`), converted to lowercase: `azure-m365-mcp`
-- For versioned images (e.g., `v1.0.1`), ensure a GitHub Release has been published for that tag
-
-**Problem**: Container exits immediately
-- **Solution**: Check logs with `docker logs <container-name>`
-- Ensure environment variables are set correctly
-- Verify the image was pulled successfully
-- Check that `MCP_TRANSPORT` is set correctly (`stdio`, `sse`, or `openapi`)
-- For `openapi` mode, verify the transport mode is being recognized in the logs
-
-**Problem**: Azure CLI commands fail
-- **Solution**: Ensure Azure CLI is authenticated in the container
-- For persistent auth, use the mounted volume for Azure CLI config
-- Check that the service principal has appropriate Azure RBAC roles
-
-## 📚 Additional Resources
-
-- [Microsoft Graph API Documentation](https://docs.microsoft.com/en-us/graph/api/overview)
-- [Azure CLI Documentation](https://docs.microsoft.com/en-us/cli/azure/)
-- [Model Context Protocol Specification](https://modelcontextprotocol.io/)
-- [Azure AD App Registration Guide](https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app)
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-MIT License 
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and deployment guidance. This project is licensed under the [MIT License](LICENSE).

@@ -2,39 +2,38 @@
 """Unified Microsoft MCP Server - Main entry point."""
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import sys
+from collections.abc import AsyncIterator
 from typing import Any, Dict, List, Optional
 
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
 from mcp.server.sse import SseServerTransport
-from mcp.types import (
-    Resource, 
-    Tool, 
-    TextContent, 
-    ImageContent, 
-    EmbeddedResource
-)
-import uvicorn
+from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.types import Resource, TextContent, Tool
+from pydantic import AnyUrl, BaseModel
 from starlette.applications import Starlette
-from starlette.routing import Route, Mount
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.routing import Mount, Route
 
 from unified_mcp.config import Settings
+from unified_mcp.security import HttpSecurityMiddleware
 from unified_mcp.services.azure_cli_service import AzureCliService
 from unified_mcp.services.graph_service import GraphService
 
 # Basic logging setup (will be reconfigured in main() with settings)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stderr)]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
 )
 logger = logging.getLogger(__name__)
 
@@ -42,18 +41,21 @@ logger = logging.getLogger(__name__)
 azure_cli_service: Optional[AzureCliService] = None
 graph_service: Optional[GraphService] = None
 
+
 # Pydantic models for OpenAPI
 class AzureCliRequest(BaseModel):
     command: str
 
+
 class AzureCliResponse(BaseModel):
     result: Any  # Can be a list, dict, or string depending on the command
+
 
 class GraphRequest(BaseModel):
     command: str
     method: str = "GET"
     data: Optional[Dict[str, Any]] = None
-    client_secret: Optional[str] = None
+
 
 class GraphResponse(BaseModel):
     success: bool = False
@@ -67,7 +69,7 @@ class GraphResponse(BaseModel):
     user_code: Optional[str] = None
     expires_in: Optional[int] = None
     instructions: Optional[str] = None
-    
+
     model_config = {"extra": "allow"}  # Allow extra fields that might be returned
 
 
@@ -78,8 +80,8 @@ def create_azure_cli_tool() -> Tool:
         description=(
             "Execute Azure CLI commands. This tool allows you to run any Azure CLI command "
             "and get the output. Commands must start with 'az'. For authentication, you can "
-            "use 'az login' for device code flow or configure service principal credentials "
-            "in environment variables."
+            "use 'az login' for device code flow, configure managed identity, or provide "
+            "service-principal credentials in environment variables."
         ),
         inputSchema={
             "type": "object",
@@ -96,6 +98,7 @@ def create_azure_cli_tool() -> Tool:
         },
     )
 
+
 def create_graph_tool() -> Tool:
     """Create the Microsoft Graph API tool definition."""
     return Tool(
@@ -106,32 +109,29 @@ def create_graph_tool() -> Tool:
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Graph API endpoint (e.g., 'users', 'me', 'groups', 'devices')"
+                    "description": "Graph API endpoint (e.g., 'users', 'me', 'groups', 'devices')",
                 },
                 "method": {
-                    "type": "string", 
+                    "type": "string",
                     "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
                     "default": "GET",
-                    "description": "HTTP method to use"
+                    "description": "HTTP method to use",
                 },
                 "data": {
                     "type": "object",
-                    "description": "Request body data (for POST, PUT, PATCH operations)"
+                    "description": "Request body data (for POST, PUT, PATCH operations)",
                 },
-                "client_secret": {
-                    "type": "string",
-                    "description": "Azure AD client secret (optional, for authenticated operations)"
-                }
             },
-            "required": ["command"]
-        }
+            "required": ["command"],
+        },
     )
 
+
 async def process_tool_call(
-    name: str, 
+    name: str,
     arguments: Dict[str, Any],
     azure_service: Optional[AzureCliService],
-    graph_service: Optional[GraphService]
+    graph_service: Optional[GraphService],
 ) -> List[TextContent]:
     """Process tool execution requests."""
     if name == "execute_azure_cli_command":
@@ -148,11 +148,11 @@ async def process_tool_call(
             if not isinstance(command, str):
                 return [TextContent(type="text", text="Error: Command must be a string")]
 
-            logger.info(f"Executing Azure CLI command via MCP: {command}")
+            logger.info("Executing Azure CLI command via MCP")
 
             # Execute the Azure CLI command
-            result = await azure_service.execute_azure_cli(command)
-            return [TextContent(type="text", text=result)]
+            azure_result = await azure_service.execute_azure_cli(command)
+            return [TextContent(type="text", text=azure_result)]
 
         except Exception as e:
             logger.error(f"Error executing Azure CLI command: {e}")
@@ -167,29 +167,28 @@ async def process_tool_call(
             command = arguments.get("command", "")
             method = arguments.get("method", "GET")
             data = arguments.get("data")
-            client_secret = arguments.get("client_secret")
-            
+
             logger.info(f"Executing Graph command: {method} {command}")
-            
-            result = await graph_service.execute_command(command, method, data, client_secret)
-            
+
+            graph_result = await graph_service.execute_command(command, method, data)
+
             # Format the response
-            if result.get("success"):
+            if graph_result.get("success"):
                 response_text = f"✅ **Success** ({method} {command})\n\n"
-                if result.get("data"):
-                    response_text += f"```json\n{json.dumps(result['data'], indent=2)}\n```"
+                if graph_result.get("data"):
+                    response_text += f"```json\n{json.dumps(graph_result['data'], indent=2)}\n```"
                 else:
                     response_text += "Operation completed successfully."
             else:
                 response_text = f"❌ **Error** ({method} {command})\n\n"
-                response_text += f"**Error:** {result.get('error', 'Unknown error')}\n\n"
-                
-                if result.get("auth_required") and result.get("instructions"):
-                    response_text += f"**Instructions:**\n{result['instructions']}\n\n"
-                
-                if result.get("error_details"):
-                    response_text += f"**Details:**\n```json\n{json.dumps(result['error_details'], indent=2)}\n```"
-            
+                response_text += f"**Error:** {graph_result.get('error', 'Unknown error')}\n\n"
+
+                if graph_result.get("auth_required") and graph_result.get("instructions"):
+                    response_text += f"**Instructions:**\n{graph_result['instructions']}\n\n"
+
+                if graph_result.get("error_details"):
+                    response_text += f"**Details:**\n```json\n{json.dumps(graph_result['error_details'], indent=2)}\n```"
+
             return [TextContent(type="text", text=response_text)]
 
         except Exception as e:
@@ -200,6 +199,7 @@ async def process_tool_call(
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
+
 async def main() -> None:
     """Main MCP server entry point."""
     global azure_cli_service, graph_service
@@ -207,39 +207,52 @@ async def main() -> None:
     try:
         # Initialize settings first
         settings = Settings()
-        
+
         # Configure logging with settings (log file and log level)
         log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
-        
+
         # Remove existing file handlers to avoid duplicates
-        root_logger.handlers = [h for h in root_logger.handlers if not isinstance(h, logging.FileHandler)]
-        
+        root_logger.handlers = [
+            h for h in root_logger.handlers if not isinstance(h, logging.FileHandler)
+        ]
+
         # Add file handler with configured log file path
+        log_directory = os.path.dirname(settings.log_file)
+        if log_directory:
+            os.makedirs(log_directory, exist_ok=True)
         file_handler = logging.FileHandler(settings.log_file)
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
         root_logger.addHandler(file_handler)
-        
+
         # Ensure stderr handler exists and is configured
-        stderr_handlers = [h for h in root_logger.handlers if isinstance(h, logging.StreamHandler) and h.stream == sys.stderr]
+        stderr_handlers = [
+            h
+            for h in root_logger.handlers
+            if isinstance(h, logging.StreamHandler) and h.stream == sys.stderr
+        ]
         if not stderr_handlers:
             stderr_handler = logging.StreamHandler(sys.stderr)
             stderr_handler.setLevel(log_level)
-            stderr_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            stderr_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            )
             root_logger.addHandler(stderr_handler)
         else:
             # Update existing stderr handler level
             for h in stderr_handlers:
                 h.setLevel(log_level)
-        
+
         # Initialize services
         azure_cli_service = AzureCliService(settings)
         graph_service = GraphService(settings)
 
         # Create MCP server
-        server: Server = Server("unified-microsoft-mcp")
+        server: Server = Server(settings.mcp_server_name)
 
         # Register tools
         azure_cli_tool = create_azure_cli_tool()
@@ -251,9 +264,7 @@ async def main() -> None:
             return [azure_cli_tool, graph_tool]
 
         @server.call_tool()  # type: ignore
-        async def handle_call_tool(
-            name: str, arguments: Dict[str, Any]
-        ) -> list[TextContent]:
+        async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> list[TextContent]:
             """Handle tool execution requests."""
             return await process_tool_call(name, arguments, azure_cli_service, graph_service)
 
@@ -262,23 +273,24 @@ async def main() -> None:
             """List available resources."""
             return [
                 Resource(
-                    uri="azure://help",
+                    uri=AnyUrl("azure://help"),
                     name="Azure CLI Help",
                     description="Help and examples for using Azure CLI commands",
-                    mimeType="text/plain"
+                    mimeType="text/plain",
                 ),
                 Resource(
-                    uri="graph://help",
+                    uri=AnyUrl("graph://help"),
                     name="Microsoft Graph Help",
                     description="Help and examples for using Microsoft Graph API",
-                    mimeType="text/plain"
-                )
+                    mimeType="text/plain",
+                ),
             ]
 
         @server.read_resource()  # type: ignore
-        async def handle_read_resource(uri: str) -> str:
+        async def handle_read_resource(uri: AnyUrl) -> str:
             """Read a resource."""
-            if uri == "azure://help":
+            uri_string = str(uri)
+            if uri_string == "azure://help":
                 return """
 # Azure CLI MCP Help
 
@@ -326,11 +338,11 @@ execute_azure_cli_command(command="az vm --help")
 ## Security Notes
 
 - Commands are validated to start with 'az'
-- Dangerous shell characters are filtered
-- All commands are logged for audit purposes
+- Commands are parsed into arguments and executed without a shell
+- Sensitive flag values are redacted from diagnostic logs
 """
 
-            elif uri == "graph://help":
+            elif uri_string == "graph://help":
                 return """
 # Microsoft Graph MCP Help
 
@@ -345,17 +357,22 @@ The Graph tool supports two authentication modes:
    - Opens browser for authentication
    - Suitable for user-delegated permissions
 
-2. **Client Secret Flow (For application permissions)**
+2. **Managed Identity (Recommended for Azure-hosted automation)**
+   - Set `USE_MANAGED_IDENTITY=true`
+   - Optionally set `MANAGED_IDENTITY_CLIENT_ID` for a user-assigned identity
+   - Grant the identity the required Azure roles and Microsoft Graph application permissions
+
+3. **Client Secret Flow (For application permissions)**
    - Requires client secret
    - Suitable for automated operations
-   - Pass client_secret parameter to the tool
+   - Supply credentials through environment variables
 
 ## Configuration
 
 ### Option 1: Separate Credentials (Default)
 Set these environment variables for Graph API:
-- `GRAPH_APP_CLIENT_ID` or `CUSTOM_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
-- `GRAPH_APP_TENANT_ID` or `CUSTOM_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
+- `GRAPH_APP_CLIENT_ID`: Your Azure AD application client ID (for read/write mode)
+- `GRAPH_APP_TENANT_ID`: Your Azure AD tenant ID (for read/write mode)
 - `GRAPH_APP_CLIENT_SECRET` or `CLIENT_SECRET`: Your client secret (optional, for app permissions)
 
 ### Option 2: Shared App Registration (Recommended)
@@ -399,7 +416,6 @@ graph_command(
             "password": "TempPassword123!"
         }
     },
-    client_secret="your-client-secret"
 )
 ```
 
@@ -431,9 +447,9 @@ graph_command(
 - `directoryRoles` - Directory roles
 - `organization` - Organization info
 
-For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
+For more endpoints, see: https://learn.microsoft.com/graph/api/overview
 """
-            
+
             raise ValueError(f"Unknown resource: {uri}")
 
         logger.info("Starting Unified Microsoft MCP Server...")
@@ -442,33 +458,108 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
         logger.info(f"Log file: {settings.log_file}")
         logger.info(f"MCP Transport mode: {settings.mcp_transport}")
         if settings.share_app_registration:
-            logger.info("✅ Shared app registration enabled: Graph API will use Azure CLI credentials")
+            logger.info(
+                "✅ Shared app registration enabled: Graph API will use Azure CLI credentials"
+            )
 
-        if settings.mcp_transport == "sse":
+        api_key = (
+            settings.mcp_api_key.get_secret_value() if settings.mcp_api_key is not None else None
+        )
+        if settings.mcp_transport != "stdio" and not api_key:
+            logger.warning(
+                "HTTP transport has no MCP_API_KEY; rely only on a loopback bind or trusted network"
+            )
+
+        if settings.mcp_transport == "streamable-http":
+            logger.info(
+                "Starting Streamable HTTP server on http://%s:%s/mcp",
+                settings.mcp_host,
+                settings.mcp_port,
+            )
+            session_manager = StreamableHTTPSessionManager(
+                app=server,
+                json_response=False,
+                stateless=False,
+            )
+
+            @contextlib.asynccontextmanager
+            async def streamable_lifespan(_app: Starlette) -> AsyncIterator[None]:
+                async with session_manager.run():
+                    yield
+
+            streamable_starlette_app = Starlette(
+                routes=[Mount("/mcp", app=session_manager.handle_request)],
+                lifespan=streamable_lifespan,
+            )
+            streamable_cors_app = CORSMiddleware(
+                streamable_starlette_app,
+                allow_origins=settings.cors_allowed_origins,
+                allow_methods=["GET", "POST", "DELETE"],
+                allow_headers=[
+                    "Authorization",
+                    "Content-Type",
+                    "MCP-Protocol-Version",
+                    "Mcp-Session-Id",
+                ],
+                expose_headers=["Mcp-Session-Id"],
+            )
+            streamable_secured_app = HttpSecurityMiddleware(
+                streamable_cors_app,
+                api_key=api_key,
+                allowed_origins=settings.cors_allowed_origins,
+            )
+            config = uvicorn.Config(
+                streamable_secured_app,
+                host=settings.mcp_host,
+                port=settings.mcp_port,
+                log_level=settings.log_level.lower(),
+            )
+            await uvicorn.Server(config).serve()
+        elif settings.mcp_transport == "sse":
             # Validate credentials for HTTP mode (where interactive auth isn't possible)
             missing_creds = []
-            
+
             # Check Azure CLI credentials
-            if not settings.has_azure_credentials():
-                logger.warning("⚠️ Azure CLI credentials missing in HTTP mode. Interactive 'az login' will not work for remote users.")
-                missing_creds.append("Azure CLI (AZURE_APP_TENANT_ID, AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET)")
-            
+            if not settings.use_managed_identity and not settings.has_azure_credentials():
+                logger.warning(
+                    "⚠️ Azure CLI credentials missing in HTTP mode. Interactive 'az login' will not work for remote users."
+                )
+                missing_creds.append(
+                    "Azure CLI (AZURE_APP_TENANT_ID, AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET)"
+                )
+
             # Check Graph credentials
-            if settings.share_app_registration:
+            if settings.use_managed_identity:
+                logger.info("Using managed identity for Azure CLI and Microsoft Graph")
+            elif settings.share_app_registration:
                 # When sharing is enabled, Graph will use Azure credentials if available
                 if settings.has_azure_credentials():
-                    logger.info("✅ Using shared app registration: Graph API will use Azure CLI credentials")
+                    logger.info(
+                        "✅ Using shared app registration: Graph API will use Azure CLI credentials"
+                    )
                 else:
-                    logger.warning("⚠️ Shared app registration enabled but Azure CLI credentials missing. Graph API will fall back to read-only mode.")
-                    missing_creds.append("Azure CLI credentials (required when SHARE_APP_REGISTRATION=true)")
+                    logger.warning(
+                        "⚠️ Shared app registration enabled but Azure CLI credentials missing. Graph API will fall back to read-only mode."
+                    )
+                    missing_creds.append(
+                        "Azure CLI credentials (required when SHARE_APP_REGISTRATION=true)"
+                    )
             else:
                 # Separate credentials mode
                 if settings.is_graph_read_only_mode:
-                    logger.warning("⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users.")
-                    logger.info("💡 Tip: Set SHARE_APP_REGISTRATION=true to use Azure CLI credentials for Graph API")
-                    missing_creds.append("Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET) or enable SHARE_APP_REGISTRATION")
+                    logger.warning(
+                        "⚠️ Graph API credentials missing in HTTP mode. Interactive Device Code Flow will not work for remote users."
+                    )
+                    logger.info(
+                        "💡 Tip: Set SHARE_APP_REGISTRATION=true to use Azure CLI credentials for Graph API"
+                    )
+                    missing_creds.append(
+                        "Microsoft Graph (GRAPH_APP_CLIENT_ID, GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_SECRET) or enable SHARE_APP_REGISTRATION"
+                    )
                 elif not settings.get_graph_client_secret():
-                    logger.warning("⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail unless secret is provided in arguments.")
+                    logger.warning(
+                        "⚠️ Graph API Client Secret missing in HTTP mode. Tool calls will fail until the environment is configured."
+                    )
                     missing_creds.append("Microsoft Graph Secret (GRAPH_APP_CLIENT_SECRET)")
 
             if missing_creds:
@@ -478,57 +569,80 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                 logger.error("Please provide these environment variables to enable authentication.")
 
             sse = SseServerTransport("/messages/")
-            
-            async def handle_sse(request: Request):
-                async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-                    await server.run(
-                        streams[0], 
-                        streams[1], 
-                        server.create_initialization_options()
-                    )
+
+            async def handle_sse(request: Request) -> PlainTextResponse:
+                async with sse.connect_sse(
+                    request.scope, request.receive, request._send
+                ) as streams:
+                    await server.run(streams[0], streams[1], server.create_initialization_options())
                 # Return empty response to avoid NoneType error when client disconnects
                 return PlainTextResponse("")
 
+            async def sse_health(_request: Request) -> JSONResponse:
+                return JSONResponse({"status": "ok"})
+
             starlette_app = Starlette(
                 routes=[
+                    Route("/health", endpoint=sse_health),
                     Route("/sse", endpoint=handle_sse),
                     Mount("/messages/", app=sse.handle_post_message),
                 ],
-                debug=settings.log_level == "DEBUG"
+                debug=settings.log_level == "DEBUG",
             )
-            
+
+            sse_cors_app = CORSMiddleware(
+                starlette_app,
+                allow_origins=settings.cors_allowed_origins,
+                allow_methods=["GET", "POST"],
+                allow_headers=["Authorization", "Content-Type"],
+            )
+            sse_secured_app = HttpSecurityMiddleware(
+                sse_cors_app,
+                api_key=api_key,
+                allowed_origins=settings.cors_allowed_origins,
+            )
+
             logger.info(f"Starting SSE server on port {settings.mcp_port}")
-            config = uvicorn.Config(starlette_app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
+            config = uvicorn.Config(
+                sse_secured_app,
+                host=settings.mcp_host,
+                port=settings.mcp_port,
+                log_level=settings.log_level.lower(),
+            )
             server_instance = uvicorn.Server(config)
             await server_instance.serve()
         elif settings.mcp_transport == "openapi":
             # OpenAPI mode using FastAPI
             logger.info("Starting OpenAPI server...")
-            
+
             app = FastAPI(
                 title="Unified Microsoft MCP API",
                 description="OpenAPI interface for Azure CLI and Microsoft Graph tools",
-                version="1.0.0"
+                version="1.1.0",
             )
 
             # Add CORS middleware to allow cross-origin requests
             app.add_middleware(
                 CORSMiddleware,
-                allow_origins=["*"],  # In production, replace with specific origins
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
+                allow_origins=settings.cors_allowed_origins,
+                allow_credentials=False,
+                allow_methods=["GET", "POST"],
+                allow_headers=["Authorization", "Content-Type"],
             )
 
+            @app.get("/health", include_in_schema=False)
+            async def health() -> Dict[str, str]:
+                return {"status": "ok"}
+
             @app.post("/execute-azure-cli", response_model=AzureCliResponse)
-            async def execute_azure_cli(request: AzureCliRequest):
+            async def execute_azure_cli(request: AzureCliRequest) -> AzureCliResponse:
                 if not azure_cli_service:
                     raise HTTPException(status_code=500, detail="Azure CLI service not initialized")
-                
+
                 try:
-                    logger.info(f"Executing Azure CLI command via API: {request.command}")
+                    logger.info("Executing Azure CLI command via API")
                     result = await azure_cli_service.execute_azure_cli(request.command)
-                    
+
                     # Try to parse result as JSON if it's a JSON string
                     # This prevents double-encoding JSON responses
                     try:
@@ -542,17 +656,18 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     raise HTTPException(status_code=500, detail=str(e))
 
             @app.post("/execute-graph-command", response_model=GraphResponse)
-            async def execute_graph_command(request: GraphRequest):
+            async def execute_graph_command(request: GraphRequest) -> GraphResponse:
                 if not graph_service:
                     raise HTTPException(status_code=500, detail="Graph service not initialized")
-                
+
                 try:
-                    logger.info(f"Executing Graph command via API: {request.method} {request.command}")
+                    logger.info(
+                        f"Executing Graph command via API: {request.method} {request.command}"
+                    )
                     result = await graph_service.execute_command(
-                        request.command, 
-                        request.method, 
-                        request.data, 
-                        request.client_secret
+                        request.command,
+                        request.method,
+                        request.data,
                     )
                     # Ensure the result matches the response model structure
                     # Use model_validate to handle missing fields gracefully
@@ -561,14 +676,29 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
                     logger.error(f"Error executing Graph command: {e}")
                     raise HTTPException(status_code=500, detail=str(e))
 
+            secured_app = HttpSecurityMiddleware(
+                app,
+                api_key=api_key,
+                allowed_origins=settings.cors_allowed_origins,
+                public_paths={"/docs", "/openapi.json", "/redoc"},
+            )
             logger.info(f"Starting FastAPI server on port {settings.mcp_port}")
-            config = uvicorn.Config(app, host="0.0.0.0", port=settings.mcp_port, log_level="info")
+            config = uvicorn.Config(
+                secured_app,
+                host=settings.mcp_host,
+                port=settings.mcp_port,
+                log_level=settings.log_level.lower(),
+            )
             server_instance = uvicorn.Server(config)
             await server_instance.serve()
         else:
             # Run the server with stdio transport
-            logger.warning(f"⚠️ Transport mode '{settings.mcp_transport}' not recognized, falling back to stdio mode")
-            logger.warning("⚠️ Note: stdio mode requires interactive stdin, which may not work in detached Docker containers")
+            logger.warning(
+                f"⚠️ Transport mode '{settings.mcp_transport}' not recognized, falling back to stdio mode"
+            )
+            logger.warning(
+                "⚠️ Note: stdio mode requires interactive stdin, which may not work in detached Docker containers"
+            )
             async with stdio_server() as streams:
                 await server.run(
                     streams[0],  # read stream
@@ -581,7 +711,15 @@ For more endpoints, see: https://docs.microsoft.com/en-us/graph/api/overview
     except Exception as e:
         logger.error(f"Error in MCP server: {e}")
         sys.exit(1)
+    finally:
+        if graph_service is not None:
+            await graph_service.close()
+
+
+def run() -> None:
+    """Run the asynchronous server from console-script and module entry points."""
+    asyncio.run(main())
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    run()

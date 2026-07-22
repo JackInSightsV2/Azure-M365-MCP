@@ -1,20 +1,3 @@
-# Core MCP dependencies
-mcp>=1.0.0
-
-# Pydantic for settings management
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
-
-# Azure dependencies
-azure-identity>=1.15.0
-
-# HTTP client for Graph API
-httpx>=0.25.0
-
-# File handling
-aiofiles>=23.2.1
-
-# HTTP Server dependencies
-starlette>=0.35.0
-fastapi>=0.109.0
-uvicorn>=0.27.0
+# Compatibility entry point for pip users. Runtime dependencies are maintained
+# in pyproject.toml so Docker, Poetry, and pip resolve the same dependency set.
+.
