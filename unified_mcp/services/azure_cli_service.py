@@ -1,103 +1,144 @@
-"""Azure CLI Service for executing Azure CLI commands."""
+"""Azure CLI command execution and authentication gating."""
+
+from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
 import shlex
-from typing import Optional
 
+from unified_mcp.auth import (
+    InteractiveAzureProfile,
+    ManagedIdentityProfile,
+    ServicePrincipalProfile,
+)
 from unified_mcp.config import Settings
+from unified_mcp.execution_policy import ExecutionPolicy
+from unified_mcp.process import AsyncProcessRunner, ProcessResult, ProcessTimeoutError
 from unified_mcp.services.azure_login_handler import AzureLoginHandler
 
 
 class AzureCliService:
-    """Service for executing Azure CLI commands."""
+    """Execute validated Azure CLI commands under authentication and policy controls."""
 
-    def __init__(self, settings: Settings):
-        """Initialize Azure CLI service."""
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        runner: AsyncProcessRunner | None = None,
+        login_handler: AzureLoginHandler | None = None,
+        policy: ExecutionPolicy | None = None,
+    ) -> None:
         self.settings = settings
-        self.login_handler = AzureLoginHandler(settings.command_timeout)
-        self._authenticated = False  # Track authentication status
+        self.auth_profile = settings.get_azure_auth_profile()
+        self.runner = runner or AsyncProcessRunner()
+        self.login_handler = login_handler or AzureLoginHandler(settings.command_timeout)
+        self.policy = policy or settings.build_execution_policy()
+        self._authenticated = False
+        self._auth_lock = asyncio.Lock()
         self._command_semaphore = asyncio.Semaphore(settings.max_concurrent_commands)
-
-        # Set up logger
         self.logger = logging.getLogger(__name__)
 
-        self.logger.info("AzureCliService initialized")
-
-        # Note: Don't create async tasks in __init__ - handle authentication separately
-        if settings.use_managed_identity:
-            self.logger.info("Azure managed identity authentication is enabled")
-        elif settings.has_azure_credentials():
-            self.logger.info("Azure credentials available for authentication")
-        else:
-            self.logger.warning("No Azure credentials provided")
-
-    async def execute_azure_cli(self, command: str) -> str:
-        """Execute Azure CLI command with validation and error handling."""
-        self.logger.debug(
-            "Executing Azure CLI command: %s", self._redact_sensitive_command(command)
+        self.logger.info(
+            "AzureCliService initialized with %s authentication", self.auth_profile.kind
         )
 
-        # Validate command
+    async def execute_azure_cli(self, command: str) -> str:
+        """Execute an Azure CLI command after validation, policy, and configured auth."""
+        redacted = self._redact_sensitive_command(command)
+        self.logger.debug("Executing Azure CLI command: %s", redacted)
+
         if not self._validate_command(command):
-            self.logger.error(
-                "Invalid Azure CLI command: %s", self._redact_sensitive_command(command)
-            )
             return "Error: Invalid command. Command must start with 'az'."
 
-        # Auto-authenticate if credentials are available and not already authenticated
-        # Skip if this is already a login command
-        auth_result: Optional[str]
-        if not command.strip().startswith("az login") and not self._authenticated:
-            if self.settings.mock_mode:
-                self.logger.info("Mock mode enabled - skipping authentication")
-                self._authenticated = True
-            elif self.settings.use_managed_identity:
-                auth_result = await self._authenticate_managed_identity()
-                if auth_result and not auth_result.startswith("Error:"):
-                    self._authenticated = True
-                    self.logger.info("Successfully authenticated with Azure managed identity")
-                else:
-                    self.logger.warning("Azure managed identity authentication failed")
-            elif self.settings.has_azure_credentials():
-                self.logger.info("Auto-authenticating with service principal credentials")
-                credentials_json = self.settings.get_azure_credentials_json()
-                if credentials_json:
-                    auth_result = await self._authenticate(credentials_json)
-                    # Check if authentication succeeded by verifying the result doesn't start with "Error:"
-                    # The _authenticate method returns "Error: ..." on failure, so we check the prefix
-                    if auth_result and not auth_result.startswith("Error:"):
-                        self._authenticated = True
-                        self.logger.info("Successfully authenticated with Azure CLI")
-                    else:
-                        self.logger.warning(f"Authentication may have failed: {auth_result}")
+        decision = self.policy.check_azure(command)
+        if not decision.allowed:
+            return f"Error: Execution policy denied command - {decision.reason}"
+
+        is_login = self._is_login_command(command)
+        if not is_login and not isinstance(self.auth_profile, InteractiveAzureProfile):
+            auth_error = await self._ensure_authenticated()
+            if auth_error is not None:
+                self.logger.error("Configured Azure authentication failed; command blocked")
+                return (
+                    "Error: Azure authentication failed; command was not executed. " f"{auth_error}"
+                )
 
         try:
-            output = await self._run_azure_cli_command(command)
-            self.logger.debug("Azure CLI command completed")
-            return output
-        except Exception as e:
-            self.logger.error(f"Error executing Azure CLI command: {e}")
-            return f"Error: Command execution failed - {str(e)}"
+            return await self._run_azure_cli_command(command)
+        except Exception as error:
+            self.logger.error("Error executing Azure CLI command: %s", error)
+            return f"Error: Command execution failed - {error}"
+
+    async def _ensure_authenticated(self) -> str | None:
+        """Authenticate exactly once, returning an error instead of falling through."""
+        async with self._auth_lock:
+            if self._authenticated:
+                return None
+            result = await self._authenticate_profile()
+            if result.returncode != 0:
+                return result.stderr or result.stdout or "Authentication failed"
+            self._authenticated = True
+            self.logger.info("Azure CLI authentication succeeded")
+            return None
+
+    async def _authenticate_profile(self) -> ProcessResult:
+        profile = self.auth_profile
+        if isinstance(profile, ManagedIdentityProfile):
+            arguments = ["az", "login", "--identity"]
+            if profile.client_id:
+                arguments.extend(["--client-id", profile.client_id])
+        elif isinstance(profile, ServicePrincipalProfile):
+            arguments = [
+                "az",
+                "login",
+                "--service-principal",
+                "--tenant",
+                profile.tenant_id,
+                "--username",
+                profile.client_id,
+                "--password",
+                profile.client_secret,
+            ]
+        else:
+            return ProcessResult(0, "Using Azure CLI cached identity", "")
+
+        try:
+            return await self.runner.run(arguments, timeout=self.settings.command_timeout)
+        except ProcessTimeoutError:
+            return ProcessResult(1, "", "Azure CLI authentication timed out")
+        except Exception as error:
+            return ProcessResult(1, "", str(error))
+
+    async def _authenticate_managed_identity(self) -> str:
+        """Backward-compatible helper used by integrations and tests."""
+        profile = self.auth_profile
+        if not isinstance(profile, ManagedIdentityProfile):
+            return "Error: Managed identity is not configured"
+        result = await self._authenticate_profile()
+        if result.returncode != 0:
+            return f"Error: {result.stderr or 'Managed identity authentication failed'}"
+        return result.stdout or "Authentication successful"
 
     def _validate_command(self, command: str) -> bool:
-        """Validate Azure CLI command."""
-        if not command or not command.strip():
+        if not command or not command.strip() or "\x00" in command:
             return False
-
         try:
             arguments = shlex.split(command, posix=os.name != "nt")
         except ValueError:
             return False
+        return bool(arguments) and arguments[0].lower() == "az"
 
-        return bool(arguments) and arguments[0].lower() == "az" and "\x00" not in command
+    @staticmethod
+    def _is_login_command(command: str) -> bool:
+        try:
+            arguments = shlex.split(command, posix=os.name != "nt")
+        except ValueError:
+            return False
+        return arguments[:2] == ["az", "login"]
 
     def _redact_sensitive_command(self, command: str) -> str:
-        """Redact sensitive information from command for error messages."""
-        # Patterns to redact: --flag <value> or --flag=<value>
         sensitive_flags = [
             (r"--password\s+\S+", "--password <REDACTED>"),
             (r"--password=\S+", "--password=<REDACTED>"),
@@ -110,160 +151,12 @@ class AzureCliService:
             (r"--api-key\s+\S+", "--api-key <REDACTED>"),
             (r"--api-key=\S+", "--api-key=<REDACTED>"),
         ]
-
-        redacted_command = command
+        redacted = command
         for pattern, replacement in sensitive_flags:
-            redacted_command = re.sub(pattern, replacement, redacted_command)
-
-        return redacted_command
-
-    async def _authenticate(self, azure_credentials: str) -> Optional[str]:
-        """Authenticate using service principal credentials."""
-        try:
-            # Read and parse the JSON credentials
-            credentials = json.loads(azure_credentials)
-
-            tenant_id = credentials.get("tenantId")
-            client_id = credentials.get("clientId")
-            client_secret = credentials.get("clientSecret")
-
-            if not all([tenant_id, client_id, client_secret]):
-                self.logger.error(
-                    "Missing required credentials: tenantId, clientId, or clientSecret"
-                )
-                return None
-
-            login_command = [
-                "az",
-                "login",
-                "--service-principal",
-                "--tenant",
-                tenant_id,
-                "--username",
-                client_id,
-                "--password",
-                client_secret,
-            ]
-
-            # Use direct command execution for service principal (bypass device code handler)
-            self.logger.info(f"Authenticating with service principal: {client_id}")
-            process = await asyncio.create_subprocess_exec(
-                *login_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=self.settings.command_timeout
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                return "Error: Azure CLI authentication timed out"
-
-            stdout_text = stdout.decode("utf-8") if stdout else ""
-            stderr_text = stderr.decode("utf-8") if stderr else ""
-
-            if process.returncode != 0:
-                error_msg = stderr_text if stderr_text else "Authentication failed"
-                self.logger.error(f"Azure CLI authentication failed: {error_msg}")
-                return f"Error: {error_msg}"
-
-            self.logger.info("Azure CLI service-principal authentication succeeded")
-            return stdout_text if stdout_text else "Authentication successful"
-
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Error parsing Azure credentials: {e}")
-            return f"Error: {str(e)}"
-        except Exception as e:
-            self.logger.error(f"Error during Azure CLI authentication: {e}")
-            return f"Error: {str(e)}"
-
-    async def _authenticate_managed_identity(self) -> str:
-        """Authenticate Azure CLI without storing a client secret."""
-        arguments = ["az", "login", "--identity"]
-        if self.settings.managed_identity_client_id:
-            arguments.extend(["--client-id", self.settings.managed_identity_client_id])
-
-        process = await asyncio.create_subprocess_exec(
-            *arguments,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self.settings.command_timeout
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            return "Error: Azure managed identity authentication timed out"
-
-        if process.returncode != 0:
-            error_text = stderr.decode("utf-8", errors="replace") if stderr else ""
-            return f"Error: {error_text or 'Managed identity authentication failed'}"
-        return stdout.decode("utf-8", errors="replace") or "Authentication successful"
+            redacted = re.sub(pattern, replacement, redacted)
+        return redacted
 
     async def _run_azure_cli_command(self, command: str) -> str:
-        """Run Azure CLI command asynchronously."""
-        # Handle Mock Mode
-        if self.settings.mock_mode:
-            self.logger.info(f"MOCK MODE: Returning fake response for '{command}'")
-            if command.startswith("az login"):
-                return json.dumps(
-                    [
-                        {
-                            "cloudName": "AzureCloud",
-                            "homeTenantId": "fake-tenant-id",
-                            "id": "fake-subscription-id",
-                            "isDefault": True,
-                            "managedByTenants": [],
-                            "name": "Fake Subscription",
-                            "state": "Enabled",
-                            "tenantId": "fake-tenant-id",
-                            "user": {"name": "fake-service-principal", "type": "servicePrincipal"},
-                        }
-                    ],
-                    indent=2,
-                )
-            elif command.startswith("az account list"):
-                return json.dumps(
-                    [
-                        {
-                            "cloudName": "AzureCloud",
-                            "homeTenantId": "fake-tenant-id",
-                            "id": "fake-subscription-id",
-                            "isDefault": True,
-                            "name": "Fake Subscription",
-                            "state": "Enabled",
-                            "tenantId": "fake-tenant-id",
-                            "user": {"name": "fake-user", "type": "user"},
-                        }
-                    ],
-                    indent=2,
-                )
-            elif command.startswith("az group list"):
-                return json.dumps(
-                    [
-                        {
-                            "id": "/subscriptions/fake/resourceGroups/rg1",
-                            "name": "rg1",
-                            "location": "eastus",
-                        },
-                        {
-                            "id": "/subscriptions/fake/resourceGroups/rg2",
-                            "name": "rg2",
-                            "location": "westus",
-                        },
-                    ],
-                    indent=2,
-                )
-            else:
-                return f"Mock output for command: {command}"
-
-        # Only use device code handler for interactive login (without service-principal flag)
-        # Service principal login should go through normal command execution
         arguments = shlex.split(command, posix=os.name != "nt")
         interactive_login = arguments[:2] == ["az", "login"] and not {
             "--service-principal",
@@ -273,43 +166,19 @@ class AzureCliService:
         if interactive_login:
             return await self.login_handler.handle_az_login_command(command)
 
-        self.logger.debug("Running Azure CLI command: %s", self._redact_sensitive_command(command))
-
         try:
             async with self._command_semaphore:
-                process = await asyncio.create_subprocess_exec(
-                    *arguments,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        process.communicate(), timeout=self.settings.command_timeout
-                    )
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
-                    redacted_command = self._redact_sensitive_command(command)
-                    return f"Error: Command timed out\nCommand: {redacted_command}"
+                result = await self.runner.run(arguments, timeout=self.settings.command_timeout)
+        except ProcessTimeoutError:
+            return f"Error: Command timed out\nCommand: {self._redact_sensitive_command(command)}"
+        except Exception as process_error:
+            return f"Error: {process_error}\nCommand: {self._redact_sensitive_command(command)}"
 
-            stdout_text = stdout.decode("utf-8") if stdout else ""
-            stderr_text = stderr.decode("utf-8") if stderr else ""
+        if result.returncode != 0:
+            error_message = result.stderr or "Command failed"
+            return f"Command: {self._redact_sensitive_command(command)}\nError: {error_message}"
+        return "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
 
-            if process.returncode != 0:
-                self.logger.error(f"Azure CLI command failed with exit code: {process.returncode}")
-                # Return stderr for error information, including redacted command for debugging
-                error_msg = f"Error: {stderr_text}" if stderr_text else "Error: Command failed"
-                redacted_command = self._redact_sensitive_command(command)
-                return f"Command: {redacted_command}\n{error_msg}"
-
-            # Combine stdout and stderr for successful commands (warnings might be in stderr)
-            output = stdout_text
-            if stderr_text:
-                output = f"{stdout_text}\n{stderr_text}".strip()
-
-            return output
-
-        except Exception as e:
-            self.logger.error(f"Error running Azure CLI command: {e}")
-            redacted_command = self._redact_sensitive_command(command)
-            return f"Error: {str(e)}\nCommand: {redacted_command}"
+    async def close(self) -> None:
+        """Terminate any interactive login still owned by this service."""
+        await self.login_handler.close()
