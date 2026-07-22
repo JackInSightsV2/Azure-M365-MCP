@@ -5,6 +5,8 @@ import time
 
 import httpx
 import pytest
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 pytestmark = pytest.mark.docker
 
@@ -135,3 +137,39 @@ async def test_openapi_graph_mock(docker_compose_env):
 async def test_streamable_http_container_health(docker_compose_env):
     """Test the Streamable HTTP container is accessible."""
     assert await wait_for_service("http://localhost:18080/health")
+
+
+@pytest.mark.asyncio
+async def test_stdio_mcp_tool_call(docker_compose_env):
+    """Initialize an MCP stdio session and invoke a tool through Docker."""
+    parameters = StdioServerParameters(
+        command="docker",
+        args=[
+            "run",
+            "--rm",
+            "-i",
+            "-e",
+            "MOCK_MODE=true",
+            "-e",
+            "MCP_TRANSPORT=stdio",
+            "tests-mcp-stdio",
+        ],
+    )
+
+    async with stdio_client(parameters) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            assert {tool.name for tool in tools.tools} == {
+                "execute_azure_cli_command",
+                "graph_command",
+            }
+
+            result = await session.call_tool(
+                "execute_azure_cli_command",
+                {"command": "az account show"},
+            )
+
+    assert result.isError is not True
+    assert result.content
+    assert "Mock output for command: az account show" in result.content[0].text
