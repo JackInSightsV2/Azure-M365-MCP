@@ -4,41 +4,36 @@ An MCP server that exposes Azure CLI commands and Microsoft Graph requests throu
 
 The server executes Azure CLI arguments without invoking a shell, limits concurrent work, applies operation timeouts, pools Graph HTTP connections, retries Graph throttling responses, and can protect every non-health HTTP endpoint with a bearer token.
 
-## Requirements
+## Use with an IDE
 
-- Python 3.11–3.14
-- Azure CLI for Azure commands
-- An Azure account with only the permissions the server needs
-- Docker and Docker Compose, if using containers
+The IDE starts and stops the server automatically over stdio. You do not run a separate server.
 
-## Install locally
-
-Poetry is the canonical environment manager:
-
-```bash
-git clone https://github.com/JackInSightsV2/Azure-M365-MCP.git
-cd Azure-M365-MCP
-poetry install
-poetry run unified-microsoft-mcp
-```
-
-For pip-based environments, `pip install -e .` is also supported.
-
-The default transport is `stdio`, bound to the MCP client's input and output. A typical MCP client configuration is:
+The simplest setup uses the published Docker image, which already contains Python, the server, and Azure CLI:
 
 ```json
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "poetry",
-      "args": ["run", "unified-microsoft-mcp"],
-      "cwd": "/absolute/path/to/Azure-M365-MCP"
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
+      ]
     }
   }
 }
 ```
 
-For client-specific configuration—including Cursor, Antigravity, OpenCode, and Codex—see [MCP client setup](docs/client-setup.md).
+Docker creates the named volume automatically so Azure CLI sign-in survives server restarts. For the exact Cursor, Antigravity, OpenCode, and Codex configuration locations, see [MCP client setup](docs/client-setup.md).
+
+To run without Docker, install Python 3.11–3.14 and Azure CLI, then install the package:
+
+```bash
+python -m pip install .
+```
+
+Use `"command": "unified-microsoft-mcp"` in the client configuration. The client still manages the process.
 
 ## Tools
 
@@ -112,7 +107,7 @@ For any HTTP deployment, set a long random `MCP_API_KEY` and send it as a bearer
 ```bash
 export MCP_TRANSPORT=streamable-http
 export MCP_API_KEY="$(openssl rand -hex 32)"
-poetry run unified-microsoft-mcp
+unified-microsoft-mcp
 ```
 
 ```text
@@ -152,17 +147,19 @@ docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
 ## Development
 
 ```bash
-poetry install
-poetry run black --check unified_mcp tests
-poetry run ruff check unified_mcp tests
-poetry run mypy unified_mcp
-poetry run pytest -m "not docker" --cov=unified_mcp
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+black --check unified_mcp tests
+ruff check unified_mcp tests
+mypy unified_mcp
+pytest -m "not docker" --cov=unified_mcp
 ```
 
 Docker integration tests use mock mode and do not require Azure credentials:
 
 ```bash
-poetry run pytest -m docker
+pytest -m docker
 ```
 
 Mock mode is test-only and must not be used in a real deployment.

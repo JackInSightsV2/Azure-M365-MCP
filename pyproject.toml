@@ -24,21 +24,23 @@ Repository = "https://github.com/JackInSightsV2/Azure-M365-MCP"
 [project.scripts]
 unified-microsoft-mcp = "unified_mcp.main:run"
 
-[tool.poetry]
-packages = [{include = "unified_mcp"}]
-
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8,<10"
-pytest-asyncio = ">=0.24,<2"
-pytest-mock = ">=3.12,<4"
-pytest-cov = ">=5,<8"
-black = ">=24,<27"
-ruff = ">=0.12,<1"
-mypy = ">=2.3.0,<3"
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-mock>=3.12,<4",
+    "pytest-cov>=5,<8",
+    "black>=24,<27",
+    "ruff>=0.12,<1",
+    "mypy>=2.3.0,<3",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["unified_mcp*"]
 
 [tool.black]
 line-length = 100
