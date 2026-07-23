@@ -104,6 +104,56 @@ Then replace the Docker command in the relevant example with the installed execu
 
 For OpenCode use `"command": ["unified-microsoft-mcp"]`; for Codex use `command = "unified-microsoft-mcp"` and omit `args`.
 
+## Optional: limit what the assistant can do
+
+The default policy is `unrestricted`, which allows the assistant to use any operation permitted by the signed-in account.
+
+If the user should only investigate and collect information, add the following two items to the Docker arguments, immediately after `"-i"`:
+
+```json
+"-e", "EXECUTION_POLICY=read-only",
+```
+
+The resulting Cursor or Antigravity section looks like this:
+
+```json
+"args": [
+  "run", "--rm", "-i",
+  "-e", "EXECUTION_POLICY=read-only",
+  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
+  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
+]
+```
+
+Use the same placement in OpenCode's `command` array and Codex's `args` array.
+
+When launching `unified-microsoft-mcp` directly instead of Docker, set the environment variable in the client configuration.
+
+Cursor and Antigravity:
+
+```json
+"env": {
+  "EXECUTION_POLICY": "read-only"
+}
+```
+
+OpenCode:
+
+```json
+"environment": {
+  "EXECUTION_POLICY": "read-only"
+}
+```
+
+Codex:
+
+```toml
+[mcp_servers.unified_microsoft.env]
+EXECUTION_POLICY = "read-only"
+```
+
+Use `allowlist` only for a tightly controlled role or workflow. See [Execution policy in the README](../README.md#execution-policy-an-optional-safety-switch) for examples and guidance.
+
 ## Authentication
 
 Start with either tool:
