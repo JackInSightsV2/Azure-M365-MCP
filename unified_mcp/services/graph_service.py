@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from unified_mcp.auth import ServicePrincipalProfile, TokenBroker
+from unified_mcp.auth import ServicePrincipalProfile, TokenBroker, pending_sign_in_response
 from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
 from unified_mcp.tenant_policy import detect_tenant_policy_refusal, tenant_policy_response
@@ -176,6 +176,9 @@ class GraphService:
 
     def _device_auth_response(self) -> Dict[str, Any]:
         info = self.device_code_info
+        browser = pending_sign_in_response(self.auth_profile)
+        if not info and browser is not None:
+            return browser
         if not info:
             return {
                 "success": False,

@@ -111,6 +111,9 @@ _CLI_SIGN_IN_MARKERS = (
     "authentication",
     "not logged in",
     "no subscription found",
+    # The Azure CLI is not installed.
+    "no such file or directory",
+    "command not found",
 )
 _ARM_PATH_HINT = (
     "Retry with an Azure Resource Manager REST path instead, for example "
@@ -376,7 +379,7 @@ class ToolApplication:
 
     @staticmethod
     def _is_cli_sign_in_failure(payload: str) -> bool:
-        """Only sign-in failures fall back to ARM REST; other CLI errors are real answers."""
+        """Only a missing CLI or a sign-in failure falls back to ARM REST; other errors stand."""
         lowered = payload.lower()
         return any(marker in lowered for marker in _CLI_SIGN_IN_MARKERS)
 

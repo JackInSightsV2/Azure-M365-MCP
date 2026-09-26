@@ -11,7 +11,11 @@ from datetime import datetime
 from typing import Any, Protocol, TypeAlias, cast
 
 from azure.core.credentials import AccessToken
-from azure.identity import DeviceCodeCredential, TokenCachePersistenceOptions
+from azure.identity import (
+    DeviceCodeCredential,
+    InteractiveBrowserCredential,
+    TokenCachePersistenceOptions,
+)
 from azure.identity.aio import ClientSecretCredential, ManagedIdentityCredential
 
 from unified_mcp.token_cache import load_auth_record, save_auth_record
@@ -20,6 +24,21 @@ from unified_mcp.token_cache import load_auth_record, save_auth_record
 # client ids (for example Graph and Azure Resource Manager) coexist in one cache as
 # separate accounts, so a single name is correct.
 TOKEN_CACHE_NAME = "unified-microsoft-mcp.cache"
+
+
+def pending_sign_in_response(profile: object) -> dict[str, Any] | None:
+    """Tell the user to finish a browser sign-in that is still in progress."""
+    if not getattr(profile, "use_browser", False):
+        return None
+    return {
+        "success": False,
+        "error": "Browser sign-in required",
+        "auth_required": True,
+        "instructions": (
+            "A browser window has opened for Microsoft sign-in. Complete sign-in there, "
+            "then retry the request."
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -51,11 +70,13 @@ class ManagedIdentityProfile:
 
 @dataclass(frozen=True)
 class DeviceCodeProfile:
-    """Delegated authentication using a device code.
+    """Delegated (user) authentication by Interactive sign-in.
 
-    When ``cache_enabled`` is set and ``auth_record_path`` points to a writable
-    location, the sign-in is persisted so subsequent runs refresh silently instead
-    of prompting again.
+    ``use_browser`` opens a browser window with a localhost redirect, the same flow as
+    ``az login`` and ``Connect-AzAccount``; otherwise a device code is shown, for hosts
+    without a browser. When ``cache_enabled`` is set and ``auth_record_path`` points to
+    a writable location, the sign-in is persisted so subsequent runs refresh silently
+    instead of prompting again.
     """
 
     tenant_id: str
@@ -63,6 +84,7 @@ class DeviceCodeProfile:
     scopes: tuple[str, ...]
     cache_enabled: bool = True
     auth_record_path: str | None = None
+    use_browser: bool = False
     kind: str = "device_code"
 
 
@@ -130,6 +152,12 @@ class TokenBroker:
                 record = load_auth_record(profile.auth_record_path)
                 if record is not None:
                     options["authentication_record"] = record
+            if profile.use_browser:
+                return InteractiveBrowserCredential(
+                    tenant_id=profile.tenant_id,
+                    client_id=profile.client_id,
+                    **options,
+                )
             return DeviceCodeCredential(
                 tenant_id=profile.tenant_id,
                 client_id=profile.client_id,

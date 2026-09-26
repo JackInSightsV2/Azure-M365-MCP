@@ -352,3 +352,17 @@ def test_read_only_policy_allows_query_and_what_if(command):
     from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
 
     assert ExecutionPolicy(ExecutionPolicyMode.READ_ONLY).check_azure(command).allowed
+
+
+@pytest.mark.asyncio
+async def test_azure_read_falls_back_to_rest_when_cli_not_installed():
+    app = ToolApplication(
+        FakeAzureCliService(failure="Error: [Errno 2] No such file or directory: 'az'"),
+        FakeGraphService(),
+        FakeAzureRestService(),
+    )
+
+    result = await app.execute_tool("azure_read", {"command": "az account list"})
+
+    assert result.is_error is False
+    assert "Fake Subscription" in result.text
