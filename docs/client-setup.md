@@ -2,7 +2,7 @@
 
 Cursor, Antigravity, OpenCode, and Codex start the server automatically when they need it and stop it when the session ends. The configuration only tells the client what command to launch.
 
-The examples use Docker because the image includes the server and Azure CLI. Docker creates the `unified-microsoft-mcp-azure` volume automatically, preserving Azure CLI sign-in between sessions.
+The examples start the server with [`uvx`](https://docs.astral.sh/uv/), which fetches and runs it without a separate install. Azure CLI commands also need the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli); without it, `azure_read` / `azure_write` use Azure Resource Manager REST. The `unified-microsoft-mcp install --client <name>` command writes these entries for Claude Code, VS Code, Cursor, Codex, and Claude Desktop.
 
 ## Cursor
 
@@ -12,13 +12,8 @@ Add this to `.cursor/mcp.json` in a project or `~/.cursor/mcp.json` globally:
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
     }
   }
 }
@@ -34,13 +29,8 @@ Add this to `.agents/mcp_config.json` in a workspace or `~/.gemini/config/mcp_co
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
     }
   }
 }
@@ -58,12 +48,7 @@ Add this to `opencode.json`:
   "mcp": {
     "unified-microsoft": {
       "type": "local",
-      "command": [
-        "docker", "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ],
+      "command": ["uvx", "--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"],
       "enabled": true
     }
   }
@@ -78,26 +63,21 @@ Add this to `~/.codex/config.toml` or `.codex/config.toml` in a trusted project:
 
 ```toml
 [mcp_servers.unified_microsoft]
-command = "docker"
-args = [
-  "run", "--rm", "-i",
-  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-  "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-]
+command = "uvx"
+args = ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
 ```
 
 Reference: [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
-## Without Docker
+## Installed executable
 
-Install Python 3.11–3.14 and the package (it includes the Azure CLI):
+To run a locally installed copy instead of `uvx`, install Python 3.11–3.14 and the package (it includes the Azure CLI):
 
 ```bash
 python -m pip install .
 ```
 
-Then replace the Docker command in the relevant example with the installed executable:
+Then replace the `uvx` command in the relevant example with the installed executable:
 
 ```json
 {
@@ -112,27 +92,7 @@ For OpenCode use `"command": ["unified-microsoft-mcp"]`; for Codex use `command 
 
 The default policy is `unrestricted`, which allows the assistant to use any operation permitted by the signed-in account.
 
-If the user should only investigate and collect information, add the following two items to the Docker arguments, immediately after `"-i"`:
-
-```json
-"-e", "EXECUTION_POLICY=read-only",
-```
-
-The resulting Cursor or Antigravity section looks like this:
-
-```json
-"args": [
-  "run", "--rm", "-i",
-  "-e", "EXECUTION_POLICY=read-only",
-  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-  "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-]
-```
-
-Use the same placement in OpenCode's `command` array and Codex's `args` array.
-
-When launching `unified-microsoft-mcp` directly instead of Docker, set the environment variable in the client configuration.
+If the user should only investigate and collect information, set the environment variable in the client configuration.
 
 Cursor and Antigravity:
 
@@ -170,4 +130,4 @@ When sign-in is required a browser window opens (or, with `SIGN_IN_FLOW=device_c
 
 ## Remote server
 
-Stdio is the normal IDE setup. If you deliberately run one shared Streamable HTTP server, configure the client with `http://127.0.0.1:8001/mcp` instead of a command. Cursor, OpenCode, and Codex call this field `url`; Antigravity calls it `serverUrl`. Set `MCP_API_KEY` on the server and configure the client to send it as a bearer token.
+Stdio is the normal IDE setup. If you deliberately run one shared Streamable HTTP server (`MCP_TRANSPORT=streamable-http`), configure the client with `http://127.0.0.1:8001/mcp` instead of a command. Cursor, OpenCode, and Codex call this field `url`; Antigravity calls it `serverUrl`. Set `MCP_API_KEY` on the server and configure the client to send it as a bearer token.

@@ -48,11 +48,10 @@ The available results depend on the permissions of the account that signs in.
 
 You need:
 
-1. [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
-2. A supported AI client: Cursor, Antigravity, OpenCode, or Codex.
+1. [uv](https://docs.astral.sh/uv/) installed. The client starts the server with `uvx`, which fetches it and its Python dependencies on first use.
+2. A supported AI client: Claude Code, Claude Desktop, VS Code, Cursor, Antigravity, OpenCode, or Codex.
 3. An Azure or Microsoft 365 account with permission to view or manage the information you need.
-
-The Docker image already contains the server, Python, and Azure CLI.
+4. Optional: the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Without it, the Azure tools use the Azure Resource Manager REST API instead.
 
 For the optional [Kubernetes (AKS) tools](#kubernetes-aks), run the server on your desktop with `uvx` (the plugin and the installer do). Nothing else needs installing: the server includes the Azure CLI, and the first AKS use downloads `kubectl` and `kubelogin` with Microsoft's `az aks install-cli`.
 
@@ -93,7 +92,7 @@ Replace `cursor` with your client. The entry is named `azure-m365`.
 
 - The installer adds the entry to the existing file and leaves your other settings and MCP servers as they are. It is safe to run again: an up-to-date entry is left alone, and an older one is replaced.
 - `--scope project|user` picks between the current project and your whole user account. `--dir <path>` uses a different project or home folder.
-- By default the client starts the server with `uvx`, so the machine needs only `uv`. The server includes the Azure CLI (an `az` already on your `PATH` is used first); the first start downloads it with the server, about 350 MB, so it can take a minute. Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
+- By default the client starts the server with `uvx`, so the machine needs only `uv`. The server includes the Azure CLI (an `az` already on your `PATH` is used first); the first start downloads it with the server, about 350 MB, so it can take a minute.
 - If the file is not plain JSON (for example, it contains comments), the installer stops without changing it. Add the entry by hand in that case.
 
 Restart your client afterwards, then continue from [Sign in](#3-sign-in).
@@ -124,13 +123,8 @@ Save as `.cursor/mcp.json` in a project or `~/.cursor/mcp.json` globally:
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
     }
   }
 }
@@ -147,13 +141,8 @@ Save as `.agents/mcp_config.json` in a workspace or `~/.gemini/config/mcp_config
 {
   "mcpServers": {
     "unified-microsoft": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
     }
   }
 }
@@ -172,12 +161,7 @@ Add to `opencode.json`:
   "mcp": {
     "unified-microsoft": {
       "type": "local",
-      "command": [
-        "docker", "run", "--rm", "-i",
-        "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-        "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-        "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-      ],
+      "command": ["uvx", "--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"],
       "enabled": true
     }
   }
@@ -193,13 +177,8 @@ Add to `~/.codex/config.toml` or `.codex/config.toml` in a trusted project:
 
 ```toml
 [mcp_servers.unified_microsoft]
-command = "docker"
-args = [
-  "run", "--rm", "-i",
-  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-  "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-]
+command = "uvx"
+args = ["--from", "git+https://github.com/JackInSightsV2/Azure-M365-MCP", "unified-microsoft-mcp"]
 ```
 
 </details>
@@ -207,7 +186,7 @@ args = [
 The configuration tells the client to run:
 
 ```text
-docker run --rm -i -v unified-microsoft-mcp-azure:/home/app/.azure -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp
 ```
 
 You do not run that command separately. The AI client runs it when required.
@@ -231,9 +210,7 @@ Ask the assistant:
 
 A browser window opens for Microsoft sign-in, the same as `az login` or `Connect-AzAccount`. Complete sign-in, then retry your original request.
 
-Microsoft Graph and Azure sign in separately, so a second browser window may open the first time you use the other. This is normal. On a machine without a browser (for example the Docker image), the assistant returns a web address and device code instead; see [Sign-in and permissions](#sign-in-and-permissions).
-
-The Docker configuration uses a named volume so Azure CLI sign-in survives restarts.
+Microsoft Graph and Azure sign in separately, so a second browser window may open the first time you use the other. This is normal. On a machine without a browser (for example over SSH), the assistant returns a web address and device code instead; see [Sign-in and permissions](#sign-in-and-permissions).
 
 ### 4. Try a read-only request
 
@@ -265,33 +242,15 @@ For a first-line support role that only gathers information, `read-only` is the 
 
 ### Where do I set it?
 
-For the recommended Docker-based IDE setup, put it inside the Docker `args` or `command` list in your MCP client configuration.
-
-Add these two entries after `"-i"`:
+Set it in the `env` block of the server entry in your MCP client configuration:
 
 ```json
-"-e", "EXECUTION_POLICY=read-only",
+"env": {
+  "EXECUTION_POLICY": "read-only"
+}
 ```
 
-For example:
-
-```json
-"args": [
-  "run", "--rm", "-i",
-  "-e", "EXECUTION_POLICY=read-only",
-  "-v", "unified-microsoft-mcp-azure:/home/app/.azure",
-  "-v", "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-  "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
-]
-```
-
-This placement works in the Cursor and Antigravity `args` arrays, the OpenCode `command` array, and the Codex `args` array. See [client setup](docs/client-setup.md#optional-limit-what-the-assistant-can-do) for complete examples.
-
-If you start the server with Docker Compose, copy `env.example` to `.env` and set:
-
-```dotenv
-EXECUTION_POLICY=read-only
-```
+OpenCode calls this block `environment`; Codex uses a `[mcp_servers.<name>.env]` table. See [client setup](docs/client-setup.md#optional-limit-what-the-assistant-can-do) for complete examples.
 
 If you run the installed executable directly, set the variable in the MCP client’s environment section or before starting the server:
 
@@ -310,12 +269,14 @@ AZURE_COMMAND_ALLOWLIST=az login,az account show,az group list,az vm list
 GRAPH_REQUEST_ALLOWLIST=GET /me,GET /users,GET /groups
 ```
 
-In a Docker-based client configuration, pass them as Docker environment arguments:
+In an MCP client configuration, put them in the server entry's `env` block:
 
 ```json
-"-e", "EXECUTION_POLICY=allowlist",
-"-e", "AZURE_COMMAND_ALLOWLIST=az login,az account show,az group list,az vm list",
-"-e", "GRAPH_REQUEST_ALLOWLIST=GET /me,GET /users,GET /groups",
+"env": {
+  "EXECUTION_POLICY": "allowlist",
+  "AZURE_COMMAND_ALLOWLIST": "az login,az account show,az group list,az vm list",
+  "GRAPH_REQUEST_ALLOWLIST": "GET /me,GET /users,GET /groups"
+}
 ```
 
 `GET /users` also permits a specific user path such as `GET /users/{id}`. It does not permit a different path such as `/users-internal`.
@@ -331,7 +292,7 @@ Execution policy can only reduce access. Azure RBAC and Microsoft Graph permissi
 
 Sign-in opens a browser window, like `az login` or `Connect-AzAccount`. No client secret is required. Microsoft Graph signs in as Microsoft Graph Command Line Tools (the app `Connect-MgGraph` uses) and Azure as Azure PowerShell (the app `Connect-AzAccount` uses).
 
-Set `SIGN_IN_FLOW=device_code` on a host without a browser (SSH sessions, containers); the server then returns a code and sign-in address instead. The Docker image sets this by default.
+Set `SIGN_IN_FLOW=device_code` on a host without a browser (for example SSH sessions); the server then returns a code and sign-in address instead.
 
 ### Microsoft Graph permissions
 
@@ -349,9 +310,7 @@ Never paste passwords, client secrets, API keys, or access tokens into an AI cha
 
 ### Signing in only once
 
-The sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. To keep the sign-in across container restarts, mount a volume at `/home/app/.IdentityService` (the configuration examples above already do this). The Docker Compose setup uses a named `identity-cache` volume for the same purpose. Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
-
-The Docker image encrypts the cached tokens at rest using a keyring (Secret Service). By default the keyring auto-unlocks; set `KEYRING_PASSWORD` (ideally from a secret store) for password-protected encryption, or `ENABLE_KEYRING=false` to store the cache as a plaintext file instead. The keyring store lives on the same `/home/app/.IdentityService` volume, so remove that volume to force a fresh sign-in. Treat the volume as sensitive regardless of mode.
+The sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. Tokens are stored in the operating system's credential store (Keychain on macOS, DPAPI on Windows, Secret Service on Linux) and fall back to a plaintext file only where none is available. The sign-in record lives in `TOKEN_CACHE_DIR` (default `~/.IdentityService`). Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
 
 ### When the Azure CLI is missing or cannot sign in
 
@@ -367,7 +326,7 @@ That file is a map of your whole Azure estate, so it is off by default. The `set
 uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on   # or: off, status
 ```
 
-`off` withdraws consent and deletes the file. For Docker, run the same subcommand in the image with the identity volume mounted (`docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`). Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
+`off` withdraws consent and deletes the file. Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
 
 ### Kubernetes (AKS)
 
@@ -412,13 +371,15 @@ It signs in (device code if needed), creates the app registration and role assig
 
 ## Troubleshooting
 
-### The client says `docker` was not found
+### The client says `uvx` was not found
 
-Install Docker Desktop, start it, and confirm this works in a terminal:
+Install [uv](https://docs.astral.sh/uv/), then confirm this works in a terminal:
 
 ```bash
-docker version
+uvx --version
 ```
+
+Some clients do not inherit your shell's `PATH`. If `uvx` works in a terminal but not in the client, use the full path from `which uvx` as the `command`.
 
 ### The tools do not appear
 
@@ -442,10 +403,10 @@ The server’s safety policy blocked the operation. Use a read-only command, add
 
 ### I am seeing an older version
 
-Pull the latest image and restart the AI client:
+`uvx` reuses its cached build. Clear it, then restart the AI client so it fetches the latest version:
 
 ```bash
-docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
+uv cache clean unified-microsoft-mcp
 ```
 
 ## Technical reference
@@ -511,9 +472,16 @@ command: kubectl rollout restart deployment/web
 | SSE | `MCP_TRANSPORT=sse` | `/sse` | Compatibility with older clients |
 | OpenAPI | `MCP_TRANSPORT=openapi` | `/docs` | Direct REST integrations |
 
+To run an HTTP transport, start the server yourself with the setting in its environment (or in a `.env` file in the working directory; see [env.example](env.example)):
+
+```bash
+MCP_TRANSPORT=openapi uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp
+curl http://127.0.0.1:8001/health
+```
+
 For HTTP deployments, set `MCP_API_KEY`, use TLS, and place the server behind network access controls. The built-in server binds to `127.0.0.1` by default.
 
-### Run without Docker
+### Run an installed copy
 
 Install Python 3.11–3.14, then install the package (it includes the Azure CLI):
 
@@ -521,15 +489,7 @@ Install Python 3.11–3.14, then install the package (it includes the Azure CLI)
 python -m pip install .
 ```
 
-Configure the MCP client to launch `unified-microsoft-mcp` directly.
-
-### Docker Compose
-
-```bash
-cp env.example .env
-docker compose up --build -d
-curl http://127.0.0.1:8001/health
-```
+Configure the MCP client to launch `unified-microsoft-mcp` directly instead of `uvx`.
 
 ### Development
 
@@ -540,13 +500,7 @@ python -m pip install -e ".[dev]"
 black --check unified_mcp tests
 ruff check unified_mcp tests
 mypy unified_mcp
-pytest -m "not docker" --cov=unified_mcp
-```
-
-Docker integration tests use mock mode and do not require Azure credentials:
-
-```bash
-pytest -m docker
+pytest --cov=unified_mcp
 ```
 
 ## Security and licensing

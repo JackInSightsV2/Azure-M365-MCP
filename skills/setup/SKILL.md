@@ -16,7 +16,7 @@ Goal: an Out-of-the-box setup. Install the server, sign in, verify. Do each step
   uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp install --client <claude-code|vscode|cursor|codex|claude-desktop>
   ```
 
-  It needs [uv](https://docs.astral.sh/uv/). It merges an `azure-m365` entry into the client's config, keeps other servers, and is safe to re-run. Add `--scope user` for every project, or `--launch docker` to run the container instead. Then tell the user to restart the client and re-run this skill.
+  It needs [uv](https://docs.astral.sh/uv/). It merges an `azure-m365` entry into the client's config, keeps other servers, and is safe to re-run. Add `--scope user` for every project. Then tell the user to restart the client and re-run this skill.
 
 Nothing else needs installing: the server includes the Azure CLI (an `az` on the user's `PATH` is used first). The first start downloads it with the server (about 350 MB), so the tools can take a minute to appear.
 
@@ -42,7 +42,7 @@ Tell the user setup is complete and which surfaces are connected. For writing co
 
 ## Kubernetes / AKS (optional)
 
-Offer this only if the user works with Azure Kubernetes Service (AKS). It needs the server running on their desktop (not Docker) and nothing installed: `kubectl` and `kubelogin` on the user's `PATH` are used, otherwise the first `kubernetes_connect` downloads them once with Microsoft's `az aks install-cli`.
+Offer this only if the user works with Azure Kubernetes Service (AKS). It needs nothing installed: `kubectl` and `kubelogin` on the user's `PATH` are used, otherwise the first `kubernetes_connect` downloads them once with Microsoft's `az aks install-cli`.
 
 1. Ask for the subscription, resource group, cluster name, and optionally a namespace (or find the cluster with `azure_find_resource` / `azure_read` `az aks list -o table`).
 2. Call `kubernetes_connect` with them. The first call may take a minute while it downloads `kubectl` and `kubelogin`. If it asks for Azure sign-in, a browser window has opened: wait for the user to finish, then retry. If the download fails, relay the manual install commands it gives, wait for the user, then retry.
@@ -60,10 +60,11 @@ State the risk plainly before asking, covering all of this:
 
 Then ask: "Do you want me to turn on the Resource inventory?" Turn it on only after an explicit yes. Anything else (no, unsure, no answer, a question) means leave it off and finish.
 
-**Turn on** (explicit yes only), using the same launcher as the server:
+**Turn on** (explicit yes only):
 
-- uvx (plugin, or the installer default): `uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on`
-- Docker: `docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`
+```bash
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on
+```
 
 If the server's config sets `TOKEN_CACHE_DIR`, run the command with the same value in its environment. No restart is needed. Confirm by calling `azure_find_resource` with the name of any Azure resource the user knows (resources only; resource groups and subscriptions are not in it).
 

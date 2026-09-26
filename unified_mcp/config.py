@@ -79,13 +79,12 @@ class Settings(BaseSettings):
     )
 
     # Device-code token cache. Persisting the sign-in lets subsequent runs refresh
-    # silently instead of prompting again. Set the directory to a mounted volume to
-    # keep the sign-in across container restarts.
+    # silently instead of prompting again.
     graph_token_cache: bool = Field(default=True, alias="GRAPH_TOKEN_CACHE")
 
     # Interactive sign-in flow for Graph and ARM REST. "browser" opens a browser window
     # (like az login / Connect-AzAccount); "device_code" is for hosts without a browser,
-    # such as containers, and for tenants that allow it.
+    # such as SSH sessions, and for tenants that allow it.
     sign_in_flow: Literal["browser", "device_code"] = Field(default="browser", alias="SIGN_IN_FLOW")
     token_cache_dir: Optional[str] = Field(default=None, alias="TOKEN_CACHE_DIR")
 

@@ -8,7 +8,6 @@ from unified_mcp.installer import (
     REPOSITORY_URL,
     SERVER_NAME,
     InstallError,
-    Launch,
     Scope,
     install,
     main,
@@ -173,21 +172,15 @@ def test_codex_install_preserves_other_settings_and_comments(tmp_path):
 
 @pytest.mark.parametrize("client", ["cursor", "codex"])
 def test_install_replaces_a_stale_entry(tmp_path, client):
-    install(client, tmp_path, launch=Launch.DOCKER)
+    first = install(client, tmp_path)
+    stale = first.path.read_text(encoding="utf-8").replace(UVX_COMMAND, "old-launcher", 1)
+    first.path.write_text(stale, encoding="utf-8")
 
     result = install(client, tmp_path)
 
     assert result.changed is True
     servers = _read(result.path)["mcpServers" if client == "cursor" else "mcp_servers"]
     assert servers == {SERVER_NAME: {"command": UVX_COMMAND, "args": UVX_ARGS}}
-
-
-def test_docker_launch_writes_docker_command(tmp_path):
-    result = install("cursor", tmp_path, launch=Launch.DOCKER)
-
-    entry = _read(result.path)["mcpServers"][SERVER_NAME]
-    assert entry["command"] == "docker"
-    assert entry["args"][-1] == "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
 
 
 def test_invalid_json_is_not_overwritten(tmp_path):
