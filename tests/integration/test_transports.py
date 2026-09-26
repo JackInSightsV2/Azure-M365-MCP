@@ -23,7 +23,8 @@ def test_mcp_initialization_includes_operational_instructions():
 
     assert options.instructions == SERVER_INSTRUCTIONS
     assert "execute_azure_cli_command" in options.instructions
-    assert "graph_command" in options.instructions
+    assert "microsoft365_read" in options.instructions
+    assert "microsoft365_write" in options.instructions
 
 
 @pytest.mark.asyncio

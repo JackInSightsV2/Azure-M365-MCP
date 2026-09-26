@@ -169,10 +169,11 @@ You do not run that command separately. The AI client runs it when required.
 
 ### 2. Restart your AI client
 
-Restart the client after saving its configuration. It should discover these two tools:
+Restart the client after saving its configuration. It should discover these tools:
 
 - `execute_azure_cli_command` for Azure;
-- `graph_command` for Microsoft 365 and Microsoft Graph.
+- `microsoft365_read` to read Microsoft 365 and Entra ID through Microsoft Graph (read-only);
+- `microsoft365_write` to change Microsoft 365 and Entra ID through Microsoft Graph (your client should ask before each call).
 
 Your client may ask you to approve a tool before it runs. That approval prompt is controlled by the client, not this server.
 
@@ -368,11 +369,13 @@ method: GET
 
 Interactive sign-in for this tool uses `AZURE_ARM_CLIENT_ID` (the Azure PowerShell public client by default), which a locked-down tenant may permit even when the Azure CLI is blocked. Disable the tool with `ENABLE_AZURE_REST=false`.
 
-`graph_command` accepts a Microsoft Graph v1.0 path, an HTTP method, and an optional JSON body:
+`microsoft365_read` accepts a Microsoft Graph v1.0 path and only issues GET requests. `microsoft365_write` accepts a path, a POST, PUT, PATCH, or DELETE method, and an optional JSON body:
 
 ```text
+# microsoft365_read
 command: users
-method: GET
+
+# microsoft365_write
 
 command: groups/{id}
 method: PATCH
