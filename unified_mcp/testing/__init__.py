@@ -4,6 +4,7 @@ from unified_mcp.testing.fakes import (
     FakeAzureCliService,
     FakeAzureRestService,
     FakeGraphService,
+    FakeProcessRunner,
 )
 
-__all__ = ["FakeAzureCliService", "FakeAzureRestService", "FakeGraphService"]
+__all__ = ["FakeAzureCliService", "FakeAzureRestService", "FakeGraphService", "FakeProcessRunner"]

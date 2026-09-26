@@ -1,6 +1,6 @@
 ---
 name: microsoft-cloud
-description: Reference for calling the microsoft365_read, microsoft365_write, azure_read, and azure_write tools correctly first time. Common Microsoft Graph v1.0 paths (users, groups, licences, mail, calendar, Teams, OneDrive/SharePoint files, Intune devices, sign-in and audit logs) and Azure CLI / ARM REST paths with api-versions (subscriptions, resource groups, resources, VMs, storage, role assignments, cost). Use whenever the user asks about their Microsoft 365, Entra ID (Azure AD), or Azure tenant.
+description: Reference for calling the microsoft365_read, microsoft365_write, azure_read, azure_write, and kubernetes_* tools correctly first time. Common Microsoft Graph v1.0 paths (users, groups, licences, mail, calendar, Teams, OneDrive/SharePoint files, Intune devices, sign-in and audit logs) and Azure CLI / ARM REST paths with api-versions (subscriptions, resource groups, resources, VMs, storage, role assignments, cost), and kubectl for AKS / Kubernetes (pods, deployments, namespaces, logs). Use whenever the user asks about their Microsoft 365, Entra ID (Azure AD), Azure tenant, or Kubernetes clusters.
 ---
 
 # Microsoft cloud tools reference
@@ -16,6 +16,9 @@ Answer from the tools, not from memory. If a tool asks for sign-in (browser wind
 | Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`, `query`, `what-if`, and `list-*` / `show-*` / `get-*` variants such as `list-locations`; not `get-credentials`) or ARM path with `api-version` (GET, or POST to Resource Graph / Cost Management query / What-if) |
 | Change Azure | `azure_write` | `command`: any other `az ...`, or ARM path + `method` + `data` |
 | Which subscription / resource group an Azure resource is in | `azure_find_resource` | `name`: all or part of the resource name |
+| Connect kubectl to an AKS cluster (once per cluster) | `kubernetes_connect` | `subscription`, `resource_group`, `cluster`, optional `namespace` |
+| Read Kubernetes | `kubernetes_read` | `command`: `kubectl get/describe/logs/top/events/...`; optional `context`, `namespace` |
+| Change Kubernetes | `kubernetes_write` | `command`: any other `kubectl ...`; optional `context`, `namespace` |
 
 - Read tools reject writes and Write tools reject reads; the error names the right tool.
 - The server picks Azure CLI or ARM REST; ARM paths have no `https://management.azure.com/` prefix. A CLI command with no REST equivalent can't fall back when the CLI is blocked; retry with an ARM path.
@@ -101,6 +104,25 @@ Query tips: always `$select` the fields you need; `$top` (max 999 for users/grou
 - `az vm start|stop|deallocate|restart -g {rg} -n {vm}` · POST `.../virtualMachines/{vm}/deallocate?api-version=2024-07-01`
 - `az role assignment create --assignee {upn} --role Reader --scope /subscriptions/{sub}/resourceGroups/{rg}`
 - Deletes (`az group delete`, DELETE on a path) are irreversible: confirm the exact target with the user first.
+
+## Kubernetes / AKS
+
+Connect once with `kubernetes_connect` (it runs `az account set`, `az aks get-credentials --overwrite-existing`, `kubelogin convert-kubeconfig -l azurecli`, and sets the namespace). It reports the current context and namespace; the connection lasts in the user's kubeconfig, so don't reconnect before every command. If it names a missing tool, relay the install command; if it asks for Azure sign-in, wait for the user, then retry. Don't know the resource group? `azure_read` `az aks list -o table`.
+
+Then pass a `command` beginning with `kubectl`. `context` and `namespace` are added as `--context` / `--namespace`; prefer them over editing the kubeconfig.
+
+- **Read (`kubernetes_read`)**: `get`, `describe`, `logs`, `top`, `explain`, `events`, `diff`, `api-resources`, `api-versions`, `version`, `cluster-info`, `auth can-i`, `auth whoami`, `config view` / `get-contexts` / `current-context`.
+  - `kubectl get pods -A -o wide` · `kubectl get pods --field-selector=status.phase!=Running -A`
+  - `kubectl get deploy,svc,ingress` · `kubectl get nodes -o wide` · `kubectl get ns`
+  - `kubectl describe pod {pod}` (events explain CrashLoopBackOff / Pending) · `kubectl events --types=Warning`
+  - `kubectl logs {pod} --tail=200` · `kubectl logs deploy/{name} -c {container} --since=1h` · `kubectl logs {pod} --previous`
+  - `kubectl top pods` · `kubectl top nodes` · `kubectl auth can-i delete pods`
+- **Write (`kubernetes_write`)**: everything else.
+  - `kubectl apply -f {file-or-url}` · `kubectl delete pod {pod}` · `kubectl rollout restart deploy/{name}` · `kubectl rollout status deploy/{name} --timeout=120s`
+  - `kubectl scale deploy/{name} --replicas=3` · `kubectl set image deploy/{name} {container}={image}`
+  - `kubectl exec {pod} -- {command}` (non-interactive) · `kubectl cordon {node}` · `kubectl config use-context {context}`
+- Not supported: `-it` / `--stdin` / `--tty`, `edit`, `attach`, `port-forward`, `proxy`, `--watch`, `logs -f`, `-f -` (stdin), `config view --raw`. Use `--tail` / `--since` for logs and `kubectl patch` / `set` instead of `edit`.
+- Say what will change before a `kubernetes_write` call; `delete` and `drain` are hard to undo.
 
 ## Verifier
 

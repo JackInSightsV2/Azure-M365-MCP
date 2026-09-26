@@ -40,6 +40,7 @@ Examples include:
 - “Find the details for user@example.com.”
 - “List Entra ID groups.”
 - “Show the managed devices in Intune.”
+- “Connect to the aks-prod cluster and list the pods that are not running.”
 
 The available results depend on the permissions of the account that signs in.
 
@@ -52,6 +53,8 @@ You need:
 3. An Azure or Microsoft 365 account with permission to view or manage the information you need.
 
 The Docker image already contains the server, Python, and Azure CLI.
+
+For the optional [Kubernetes (AKS) tools](#kubernetes-aks), run the server on your desktop (for example with `uvx`) with the Azure CLI, `kubectl`, and `kubelogin` installed. The Docker image does not include `kubectl` or `kubelogin`.
 
 ## Claude Code plugin
 
@@ -366,6 +369,26 @@ uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsof
 
 `off` withdraws consent and deletes the file. For Docker, run the same subcommand in the image with the identity volume mounted (`docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`). Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
 
+### Kubernetes (AKS)
+
+The Kubernetes tools use your own Azure CLI, `kubelogin`, and `kubectl`, with your own kubeconfig (`KUBECONFIG` is respected) and the same access you have in a terminal. They are for desktop use: the Docker image does not include `kubectl` or `kubelogin`. Install them with:
+
+```bash
+brew install azure-cli kubectl Azure/kubelogin/kubelogin   # macOS
+az aks install-cli                                         # any OS with the Azure CLI
+```
+
+`kubernetes_connect` (subscription, resource group, cluster, optional namespace) does what you would do by hand, stopping at the first step that fails:
+
+```bash
+az account set --subscription <sub>
+az aks get-credentials --resource-group <rg> --name <cluster> --overwrite-existing
+kubelogin convert-kubeconfig -l azurecli
+kubectl config set-context --current --namespace=<ns>
+```
+
+If the Azure CLI is not signed in, it starts `az login` first, following `SIGN_IN_FLOW` (a browser window by default; device code only with `SIGN_IN_FLOW=device_code`). Then use `kubernetes_read` for `get`, `describe`, `logs`, `top`, `events`, and other reads, and `kubernetes_write` for every other kubectl command. Interactive and long-running commands (`-it`, `edit`, `attach`, `port-forward`, `proxy`, `--watch`, `logs -f`) are rejected. Set `ENABLE_KUBERNETES=false` to hide the tools.
+
 ### Unattended or shared server
 
 Administrators can configure managed identity or a service principal through environment variables. See [env.example](env.example). These options are intended for managed deployments, not normal desktop setup.
@@ -455,6 +478,22 @@ data: {"displayName": "New name"}
 ```
 
 Graph writes require an application or managed identity with the necessary Microsoft Graph application permissions.
+
+`kubernetes_connect` connects kubectl to an AKS cluster once; `kubernetes_read` (read-only kubectl commands) and `kubernetes_write` (every other kubectl command) take a `command` beginning with `kubectl` plus optional `context` and `namespace`. See [Kubernetes (AKS)](#kubernetes-aks).
+
+```text
+# kubernetes_connect
+subscription: Contoso Prod
+resource_group: rg-aks
+cluster: aks-prod
+namespace: payments
+
+# kubernetes_read
+command: kubectl get pods -o wide
+
+# kubernetes_write
+command: kubectl rollout restart deployment/web
+```
 
 ### Transport options
 

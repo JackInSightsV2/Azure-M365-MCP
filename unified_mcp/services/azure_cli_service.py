@@ -34,7 +34,9 @@ class AzureCliService:
         self.settings = settings
         self.auth_profile = settings.get_azure_auth_profile()
         self.runner = runner or AsyncProcessRunner()
-        self.login_handler = login_handler or AzureLoginHandler(settings.command_timeout)
+        self.login_handler = login_handler or AzureLoginHandler(
+            settings.command_timeout, settings.sign_in_flow
+        )
         self.policy = policy or settings.build_execution_policy()
         self._authenticated = False
         self._auth_lock = asyncio.Lock()

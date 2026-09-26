@@ -40,6 +40,14 @@ If the user has no Azure subscription, the Azure check can fail while Microsoft 
 
 Tell the user setup is complete and which surfaces are connected. For writing correct calls, use the `microsoft-cloud` skill.
 
+## Kubernetes / AKS (optional)
+
+Offer this only if the user works with Azure Kubernetes Service (AKS). It needs the server running on their desktop (not Docker) with the Azure CLI, `kubectl`, and `kubelogin` installed: `brew install azure-cli kubectl Azure/kubelogin/kubelogin` on macOS, or `az aks install-cli`.
+
+1. Ask for the subscription, resource group, cluster name, and optionally a namespace (or find the cluster with `azure_find_resource` / `azure_read` `az aks list -o table`).
+2. Call `kubernetes_connect` with them. If it asks for Azure sign-in, a browser window has opened: wait for the user to finish, then retry. If it names a missing tool, relay the install command.
+3. Verify with `kubernetes_read` `command: "kubectl get nodes"` and report the context and namespace.
+
 ## Resource inventory (opt-in)
 
 After a successful Azure check, offer the Resource inventory. It makes `azure_find_resource` work: one lookup that says which subscription and resource group a named Azure resource is in.

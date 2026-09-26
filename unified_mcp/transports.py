@@ -78,7 +78,7 @@ def create_mcp_server(settings: Settings, application: ToolApplication) -> Serve
         version="1.1.0",
         instructions=SERVER_INSTRUCTIONS,
     )
-    tools = create_tools()
+    tools = create_tools(kubernetes=settings.enable_kubernetes)
     resources = create_resources()
 
     @server.list_tools()  # type: ignore[untyped-decorator]

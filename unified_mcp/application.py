@@ -20,6 +20,12 @@ from unified_mcp.resource_inventory import (
     ResourceInventoryError,
     consent_message,
 )
+from unified_mcp.services.kubernetes_service import (
+    KubectlCommandError,
+    KubernetesService,
+    parse_kubectl,
+    validate_namespace,
+)
 
 SERVER_INSTRUCTIONS = (
     "This server connects to the user's Microsoft cloud: Microsoft 365 (also called M365 "
@@ -42,7 +48,13 @@ SERVER_INSTRUCTIONS = (
     "- azure_write: create, change, or delete the same Azure resources, with the same "
     "inputs and fallback.\n"
     "- azure_find_resource: find which subscription and resource group an Azure resource "
-    "is in by name, in one call. Try it before searching subscriptions one by one.\n\n"
+    "is in by name, in one call. Try it before searching subscriptions one by one.\n"
+    "- kubernetes_connect: connect to an Azure Kubernetes Service (AKS) cluster once "
+    "(subscription, resource group, cluster, optional namespace) so kubectl can reach it.\n"
+    "- kubernetes_read: read Kubernetes with kubectl — pods, deployments, services, "
+    "namespaces, nodes, events, logs (get, describe, logs, top, ...).\n"
+    "- kubernetes_write: change Kubernetes with kubectl — apply, delete, scale, rollout "
+    "restart, label, exec, and every other kubectl command that is not a read.\n\n"
     "Prefer read operations, inspect the help resources before unfamiliar actions, and "
     "never place credentials in tool arguments. Authentication prompts may require the "
     "user to complete a sign-in (browser window or device code) and retry."
@@ -90,6 +102,11 @@ class RestExecutor(Protocol):
 AZURE_READ_TOOL = "azure_read"
 AZURE_WRITE_TOOL = "azure_write"
 AZURE_FIND_RESOURCE_TOOL = "azure_find_resource"
+KUBERNETES_CONNECT_TOOL = "kubernetes_connect"
+KUBERNETES_READ_TOOL = "kubernetes_read"
+KUBERNETES_WRITE_TOOL = "kubernetes_write"
+KUBERNETES_TOOLS = (KUBERNETES_CONNECT_TOOL, KUBERNETES_READ_TOOL, KUBERNETES_WRITE_TOOL)
+_KUBERNETES_DISABLED = "Kubernetes tools are disabled on this server (ENABLE_KUBERNETES=false)"
 ARM_BASE_URL = "https://management.azure.com/"
 
 # Azure CLI commands with a direct ARM REST equivalent, keyed by command path (the
@@ -142,6 +159,25 @@ class AzureToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class KubernetesConnectInput(BaseModel):
+    """Typed kubernetes_connect input: the AKS cluster to connect kubectl to."""
+
+    subscription: str = Field(min_length=1)
+    resource_group: str = Field(min_length=1)
+    cluster: str = Field(min_length=1)
+    namespace: Optional[str] = Field(default=None, min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+
+class KubectlToolInput(BaseModel):
+    """Typed kubernetes_read / kubernetes_write input: a kubectl command."""
+
+    command: str = Field(min_length=1)
+    context: Optional[str] = Field(default=None, min_length=1)
+    namespace: Optional[str] = Field(default=None, min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+
 class FindResourceInput(BaseModel):
     """Typed azure_find_resource input: all or part of a resource name."""
 
@@ -168,11 +204,13 @@ class ToolApplication:
         graph_service: GraphExecutor | None,
         arm_service: RestExecutor | None = None,
         resource_inventory: ResourceInventory | None = None,
+        kubernetes_service: KubernetesService | None = None,
     ) -> None:
         self.azure_service = azure_service
         self.graph_service = graph_service
         self.arm_service = arm_service
         self.resource_inventory = resource_inventory
+        self.kubernetes_service = kubernetes_service
         self.logger = logging.getLogger(__name__)
 
     async def execute_tool(
@@ -195,6 +233,20 @@ class ToolApplication:
             except ValidationError as error:
                 return self._error(name, self._validation_message(error))
             return await self._find_resource(find_request.name)
+
+        if name == KUBERNETES_CONNECT_TOOL:
+            try:
+                connect_request = KubernetesConnectInput.model_validate(arguments)
+            except ValidationError as error:
+                return self._error(name, self._validation_message(error))
+            return await self._kubernetes_connect(connect_request)
+
+        if name in (KUBERNETES_READ_TOOL, KUBERNETES_WRITE_TOOL):
+            try:
+                kubectl_request = KubectlToolInput.model_validate(arguments)
+            except ValidationError as error:
+                return self._error(name, self._validation_message(error))
+            return await self._kubectl(name, kubectl_request)
 
         if name in (MICROSOFT365_READ, MICROSOFT365_WRITE):
             if self.graph_service is None:
@@ -269,6 +321,99 @@ class ToolApplication:
         )
         text = f"{header}\n\n```json\n{json.dumps(found.matches, indent=2)}\n```"
         return ToolExecutionResult(tool, payload, text, False)
+
+    async def _kubernetes_connect(self, request: KubernetesConnectInput) -> ToolExecutionResult:
+        """Connect kubectl to an AKS cluster the way the user would by hand."""
+        tool = KUBERNETES_CONNECT_TOOL
+        service = self.kubernetes_service
+        if service is None:
+            return self._error(tool, _KUBERNETES_DISABLED)
+        for field in ("subscription", "resource_group", "cluster"):
+            if getattr(request, field).startswith("-"):
+                return self._error(tool, f"Invalid {field}: it must not start with '-'")
+        try:
+            if request.namespace is not None:
+                validate_namespace(request.namespace)
+        except KubectlCommandError as error:
+            return self._error(tool, str(error))
+
+        refusal = service.preflight_connect(request.resource_group, request.cluster)
+        if refusal is not None:
+            return self._error(tool, refusal["error"], refusal)
+        sign_in = await self._ensure_azure_sign_in(tool)
+        if sign_in is not None:
+            return sign_in
+
+        payload = await service.connect(
+            request.subscription, request.resource_group, request.cluster, request.namespace
+        )
+        if not payload.get("success"):
+            text = f"Error: {payload['error']}"
+            if payload.get("failed_step"):
+                text = f"Error: step failed: {payload['failed_step']}\n\n{payload['error']}"
+            return ToolExecutionResult(tool, payload, text, True)
+        text = (
+            f"Connected kubectl to AKS cluster '{request.cluster}' (resource group "
+            f"'{request.resource_group}', subscription '{request.subscription}').\n"
+            f"Current context: {payload.get('context') or 'unknown'}\n"
+            f"Namespace: {payload.get('namespace') or 'default'}\n\n"
+            f"Use {KUBERNETES_READ_TOOL} and {KUBERNETES_WRITE_TOOL} for kubectl commands."
+        )
+        return ToolExecutionResult(tool, payload, text, False)
+
+    async def _ensure_azure_sign_in(self, tool: str) -> ToolExecutionResult | None:
+        """Start an Azure CLI sign-in when the CLI has none; None when already signed in."""
+        if self.azure_service is None:
+            return None
+        status = await self.azure_service.execute_azure_cli("az account show")
+        if not self._is_cli_error(status):
+            return None
+        if not self._is_cli_sign_in_failure(status):
+            return ToolExecutionResult(tool, {"success": False, "error": status}, status, True)
+        login = await self.azure_service.execute_azure_cli("az login")
+        text = (
+            f"{login}\n\nThe Azure CLI must be signed in before connecting to AKS. "
+            f"After signing in, call {tool} again."
+        )
+        payload = {"success": False, "auth_required": True, "error": text}
+        return ToolExecutionResult(tool, payload, text, True)
+
+    async def _kubectl(self, name: str, request: KubectlToolInput) -> ToolExecutionResult:
+        """Route a kubectl command to the Read or Write tool and run it."""
+        if self.kubernetes_service is None:
+            return self._error(name, _KUBERNETES_DISABLED)
+        try:
+            command = parse_kubectl(request.command)
+            if request.namespace is not None:
+                validate_namespace(request.namespace)
+        except KubectlCommandError as error:
+            return self._error(name, str(error))
+        if request.context is not None and request.context.startswith("-"):
+            return self._error(name, "Invalid context: it must not start with '-'")
+        if command.verb == "config" and (request.context or request.namespace):
+            return self._error(
+                name, "context and namespace do not apply to 'kubectl config' commands"
+            )
+
+        if name == KUBERNETES_READ_TOOL and not command.read_only:
+            return self._error(
+                name,
+                f"{KUBERNETES_READ_TOOL} only runs read-only kubectl commands (get, describe, "
+                f"logs, top, events, ...). Use {KUBERNETES_WRITE_TOOL} for '{command.label}'.",
+            )
+        if name == KUBERNETES_WRITE_TOOL and command.read_only:
+            return self._error(
+                name,
+                f"{KUBERNETES_WRITE_TOOL} only runs kubectl commands that change the cluster or "
+                f"kubeconfig. Use {KUBERNETES_READ_TOOL} for '{command.label}'.",
+            )
+
+        payload = await self.kubernetes_service.run_kubectl(
+            command, context=request.context, namespace=request.namespace
+        )
+        if not payload.get("success"):
+            return ToolExecutionResult(name, payload, f"Error: {payload['error']}", True)
+        return ToolExecutionResult(name, payload, payload.get("output") or "Completed.", False)
 
     async def _execute_azure_cli(self, name: str, request: AzureToolInput) -> ToolExecutionResult:
         """Run an Azure CLI command, falling back to ARM REST when the CLI is absent or fails."""
@@ -435,14 +580,24 @@ class ToolApplication:
         return text
 
     @staticmethod
-    def _error(name: str, message: str) -> ToolExecutionResult:
+    def _error(
+        name: str, message: str, payload: Dict[str, Any] | None = None
+    ) -> ToolExecutionResult:
         text = f"Error: {message}"
-        return ToolExecutionResult(name, {"success": False, "error": message}, text, True)
+        return ToolExecutionResult(
+            name, payload or {"success": False, "error": message}, text, True
+        )
 
     async def close(self) -> None:
         """Close both adapters, even when the first close fails."""
         errors: list[Exception] = []
-        for service in (self.azure_service, self.graph_service, self.arm_service):
+        services = (
+            self.azure_service,
+            self.graph_service,
+            self.arm_service,
+            self.kubernetes_service,
+        )
+        for service in services:
             if service is None:
                 continue
             try:
@@ -485,7 +640,130 @@ def _azure_input_schema(*, read_only: bool) -> Dict[str, Any]:
     }
 
 
-def create_tools() -> list[Tool]:
+def _kubectl_input_schema(*, read_only: bool) -> Dict[str, Any]:
+    """Shared input schema for the Kubernetes Read and Write tools."""
+    example = (
+        "'kubectl get pods -o wide'" if read_only else "'kubectl scale deploy/web --replicas=3'"
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "minLength": 1,
+                "description": f"kubectl command beginning with 'kubectl', for example {example}",
+            },
+            "context": {
+                "type": "string",
+                "minLength": 1,
+                "description": "kubeconfig context to use (default: the current context)",
+            },
+            "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Kubernetes namespace (default: the context's namespace)",
+            },
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    }
+
+
+def _kubernetes_tools() -> list[Tool]:
+    """Kubernetes (AKS) tool schemas, listed when ENABLE_KUBERNETES is on."""
+    return [
+        Tool(
+            name=KUBERNETES_CONNECT_TOOL,
+            description=(
+                "Connect kubectl to an Azure Kubernetes Service (AKS) cluster, once per "
+                "cluster, before using kubernetes_read or kubernetes_write. Does what the "
+                "user would do by hand: selects the Azure subscription, runs 'az aks "
+                "get-credentials --overwrite-existing', converts the kubeconfig with "
+                "'kubelogin convert-kubeconfig -l azurecli' (Entra ID sign-in through the Azure "
+                "CLI), and optionally sets the default namespace. Starts an Azure CLI sign-in "
+                "if needed. Returns the current kubectl context and namespace. Needs az, "
+                "kubelogin, and kubectl installed; rewrites this cluster's local kubeconfig "
+                "entry."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subscription": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Azure subscription ID or name that holds the cluster",
+                    },
+                    "resource_group": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Resource group of the AKS cluster",
+                    },
+                    "cluster": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "AKS cluster name",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Optional default namespace for the kubectl context",
+                    },
+                },
+                "required": ["subscription", "resource_group", "cluster"],
+                "additionalProperties": False,
+            },
+            annotations=ToolAnnotations(
+                title="Connect to an AKS cluster",
+                readOnlyHint=False,
+                destructiveHint=False,
+            ),
+        ),
+        Tool(
+            name=KUBERNETES_READ_TOOL,
+            description=(
+                "Read Kubernetes clusters (AKS or any cluster in the user's kubeconfig) with "
+                "kubectl: pods, deployments, services, namespaces, nodes, events, logs, and "
+                "resource usage. Read-only kubectl commands only: get, describe, logs, top, "
+                "explain, events, diff, api-resources, api-versions, version, cluster-info, "
+                "auth can-i, auth whoami, config view / get-contexts / current-context. Pass "
+                "the command beginning with 'kubectl'; optional context and namespace are "
+                "added as flags. Watching, following logs, and interactive commands are not "
+                "supported. Examples: 'kubectl get pods -A', 'kubectl describe deploy/web', "
+                "'kubectl logs deploy/web --tail=100'. Use kubernetes_connect first for AKS, "
+                "and kubernetes_write for changes."
+            ),
+            inputSchema=_kubectl_input_schema(read_only=True),
+            annotations=ToolAnnotations(
+                title="Read Kubernetes",
+                readOnlyHint=True,
+                destructiveHint=False,
+            ),
+        ),
+        Tool(
+            name=KUBERNETES_WRITE_TOOL,
+            description=(
+                "Change Kubernetes clusters (AKS or any cluster in the user's kubeconfig) with "
+                "kubectl: apply or delete manifests, delete or restart pods, create resources, "
+                "scale or restart deployments (rollout), patch, label, annotate, cordon or "
+                "drain nodes, run a non-interactive exec, copy files, create namespaces, switch "
+                "contexts or namespaces. Runs every "
+                "kubectl command that is not a read; pass it beginning with 'kubectl', with "
+                "optional context and namespace. Interactive and long-running commands (-it, "
+                "edit, attach, port-forward, proxy, --watch) are not supported. Examples: "
+                "'kubectl apply -f deploy.yaml', 'kubectl rollout restart deploy/web', "
+                "'kubectl delete pod web-123'. Use kubernetes_read for lookups."
+            ),
+            inputSchema=_kubectl_input_schema(read_only=False),
+            annotations=ToolAnnotations(
+                title="Change Kubernetes",
+                readOnlyHint=False,
+                destructiveHint=True,
+            ),
+        ),
+    ]
+
+
+def create_tools(*, kubernetes: bool = True) -> list[Tool]:
     """Return the canonical tool schemas exposed by every MCP transport."""
     return [
         Tool(
@@ -622,6 +900,7 @@ def create_tools() -> list[Tool]:
             },
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
         ),
+        *(_kubernetes_tools() if kubernetes else []),
     ]
 
 

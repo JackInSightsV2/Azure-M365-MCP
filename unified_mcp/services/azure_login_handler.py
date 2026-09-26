@@ -1,4 +1,4 @@
-"""Lifecycle-safe Azure CLI device-code login handling."""
+"""Lifecycle-safe interactive Azure CLI login handling (browser or device code)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,36 @@ import logging
 import os
 import re
 import shlex
+from typing import Literal
+
+SignInFlow = Literal["browser", "device_code"]
+
+BROWSER_LOGIN_MESSAGE = (
+    "Azure sign-in started: a browser window opened for the Azure CLI (az login). "
+    "Complete sign-in there, then retry the request."
+)
 
 
 class AzureLoginHandler:
-    """Start device login, return its prompt, and own the remaining process lifetime."""
+    """Start an interactive login, return its prompt, and own the remaining process lifetime.
 
-    def __init__(self, command_timeout: int = 300) -> None:
+    ``sign_in_flow`` follows the SIGN_IN_FLOW setting: "browser" runs plain ``az login``,
+    which opens a browser window; "device_code" adds ``--use-device-code``.
+    """
+
+    def __init__(
+        self,
+        command_timeout: int = 300,
+        sign_in_flow: SignInFlow = "browser",
+        *,
+        browser_wait: float = 3.0,
+    ) -> None:
         self.logger = logging.getLogger(__name__)
         self.command_timeout = command_timeout
+        self.sign_in_flow = sign_in_flow
+        # How long browser sign-in may run before the prompt returns, to catch an
+        # immediate failure (for example an unknown argument) instead of hiding it.
+        self.browser_wait = browser_wait
         self.current_process: asyncio.subprocess.Process | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
@@ -23,8 +45,8 @@ class AzureLoginHandler:
         self.last_login_error: str | None = None
 
     async def handle_az_login_command(self, command: str) -> str:
-        """Force device authentication and return the sign-in prompt promptly."""
-        arguments = self._device_login_arguments(command)
+        """Start the configured interactive sign-in and return its prompt promptly."""
+        arguments = self._login_arguments(command)
         async with self._lock:
             await self._stop_current()
             self.last_login_error = None
@@ -37,10 +59,12 @@ class AzureLoginHandler:
                     env={**os.environ, "PYTHONUNBUFFERED": "1"},
                 )
                 self.current_process = process
-                return await asyncio.wait_for(
-                    self._read_initial_output(process),
-                    timeout=self.command_timeout,
+                initial = (
+                    self._read_initial_output(process)
+                    if self.sign_in_flow == "device_code"
+                    else self._read_browser_output(process)
                 )
+                return await asyncio.wait_for(initial, timeout=self.command_timeout)
             except asyncio.TimeoutError:
                 await self._stop_current()
                 return "Error: Azure login timed out"
@@ -49,17 +73,49 @@ class AzureLoginHandler:
                 self.logger.error("Error starting Azure login: %s", error)
                 return f"Error: Failed to start login process - {error}"
 
-    @staticmethod
-    def _device_login_arguments(command: str) -> list[str]:
+    def _login_arguments(self, command: str) -> list[str]:
+        """Interactive ``az login`` arguments; device code only when SIGN_IN_FLOW asks."""
         sanitized = re.sub(r"--use-device-code\b", "", command)
         sanitized = re.sub(r"--service-principal\b", "", sanitized)
         sanitized = re.sub(r"--username(?:=|\s+)\S+", "", sanitized)
         sanitized = re.sub(r"--password(?:=|\s+)\S+", "", sanitized)
         sanitized = re.sub(r"--tenant(?:=|\s+)\S+", "", sanitized)
-        return shlex.split(
-            sanitized.strip() + " --use-device-code",
-            posix=os.name != "nt",
-        )
+        if self.sign_in_flow == "device_code":
+            sanitized = sanitized.strip() + " --use-device-code"
+        return shlex.split(sanitized.strip(), posix=os.name != "nt")
+
+    async def _read_browser_output(self, process: asyncio.subprocess.Process) -> str:
+        """Leave browser sign-in running in the background unless it fails at once."""
+        output: list[str] = []
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.browser_wait
+        while process.stdout is not None:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            if not line:
+                # The CLI closed its output: it finished (or failed) before the deadline.
+                await process.wait()
+                break
+            decoded = line.decode("utf-8", errors="replace").strip()
+            if decoded:
+                output.append(decoded)
+            if "browser has been opened" in decoded.lower():
+                break
+
+        if process.returncode is None:
+            self._continue_in_background(process)
+            return BROWSER_LOGIN_MESSAGE
+        self.current_process = None
+        text = "\n".join(output)
+        if process.returncode != 0:
+            self.last_login_error = text or None
+            return f"Error: Azure sign-in failed\n{text}".rstrip()
+        return text or "Azure sign-in completed."
 
     async def _read_initial_output(self, process: asyncio.subprocess.Process) -> str:
         output: list[str] = []
@@ -121,14 +177,14 @@ class AzureLoginHandler:
                     tail = [*tail[-19:], line.decode("utf-8", errors="replace").rstrip()]
             return_code = await process.wait()
             if return_code == 0:
-                self.logger.info("Azure device login completed")
+                self.logger.info("Azure interactive login completed")
             else:
                 self.last_login_error = "\n".join(part for part in tail if part) or None
-                self.logger.warning("Azure device login failed with code %s", return_code)
+                self.logger.warning("Azure interactive login failed with code %s", return_code)
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            self.logger.error("Error completing Azure device login: %s", error)
+            self.logger.error("Error completing Azure interactive login: %s", error)
 
     async def _stop_current(self) -> None:
         task = self._completion_task

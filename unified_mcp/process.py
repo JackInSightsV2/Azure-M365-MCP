@@ -21,7 +21,11 @@ class ProcessResult:
 
 
 class AsyncProcessRunner:
-    """Run commands without a shell and enforce termination on timeout."""
+    """Run commands without a shell and enforce termination on timeout.
+
+    Standard input is closed, so a command never reads the MCP stdio stream or waits on
+    a prompt.
+    """
 
     async def run(
         self,
@@ -32,12 +36,14 @@ class AsyncProcessRunner:
         if env is None:
             process = await asyncio.create_subprocess_exec(
                 *arguments,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
         else:
             process = await asyncio.create_subprocess_exec(
                 *arguments,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,

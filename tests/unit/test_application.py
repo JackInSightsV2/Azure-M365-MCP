@@ -12,7 +12,15 @@ def test_create_tools_exposes_azure_read_and_write():
         "azure_find_resource",
         "microsoft365_read",
         "microsoft365_write",
+        "kubernetes_connect",
+        "kubernetes_read",
+        "kubernetes_write",
     }
+
+
+def test_create_tools_hides_kubernetes_when_disabled():
+    names = {tool.name for tool in create_tools(kubernetes=False)}
+    assert not {name for name in names if name.startswith("kubernetes_")}
 
 
 def test_microsoft365_tools_carry_read_and_write_hints():

@@ -109,6 +109,10 @@ class Settings(BaseSettings):
         alias="AZURE_ARM_SCOPE",
     )
 
+    # Kubernetes (AKS) tools: kubernetes_connect, kubernetes_read, kubernetes_write. They
+    # run the user's own az, kubelogin, and kubectl with the user's kubeconfig.
+    enable_kubernetes: bool = Field(default=True, alias="ENABLE_KUBERNETES")
+
     # Custom app registration settings (optional - enables read/write mode)
     custom_client_id: Optional[str] = Field(default=None, alias="GRAPH_APP_CLIENT_ID")
     custom_tenant_id: Optional[str] = Field(default=None, alias="GRAPH_APP_TENANT_ID")
