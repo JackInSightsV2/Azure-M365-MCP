@@ -385,3 +385,17 @@ async def test_graph_forbidden_explains_missing_permission():
 
     assert result.is_error is True
     assert "Suggestion:" in result.text and "GRAPH_SCOPES" in result.text
+
+
+@pytest.mark.asyncio
+async def test_az_account_show_falls_back_to_rest_when_cli_not_installed():
+    app = ToolApplication(
+        FakeAzureCliService(failure="[Errno 2] No such file or directory: 'az'"),
+        FakeGraphService(),
+        FakeAzureRestService(),
+    )
+
+    result = await app.execute_tool("azure_read", {"command": "az account show"})
+
+    assert result.is_error is False
+    assert "Fake Subscription" in result.text

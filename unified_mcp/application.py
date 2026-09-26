@@ -96,6 +96,8 @@ ARM_BASE_URL = "https://management.azure.com/"
 # non-flag tokens after 'az'). Anything else cannot fall back and asks for an ARM path.
 _CLI_TO_ARM_PATHS: Dict[tuple[str, ...], str] = {
     ("account", "list"): "subscriptions?api-version=2022-12-01",
+    # No default subscription exists outside the CLI, so list them all.
+    ("account", "show"): "subscriptions?api-version=2022-12-01",
 }
 # ARM endpoints that take POST but only read or predict: Resource Graph queries, Cost
 # Management queries, and deployment What-if.
