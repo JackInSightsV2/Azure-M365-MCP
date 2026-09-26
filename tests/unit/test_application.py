@@ -303,3 +303,51 @@ async def test_azure_write_rejects_reads(arguments):
 
     assert result.is_error is True
     assert "azure_read" in result.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+        "subscriptions/s/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
+        "subscriptions/s/resourcegroups/rg/providers/Microsoft.Resources/deployments/d/whatIf"
+        "?api-version=2021-04-01",
+    ],
+)
+async def test_azure_read_allows_read_only_posts(command):
+    app = ToolApplication(FakeAzureCliService(), FakeGraphService(), FakeAzureRestService())
+
+    result = await app.execute_tool(
+        "azure_read", {"command": command, "method": "POST", "data": {"query": "x"}}
+    )
+
+    assert result.is_error is False
+    assert (await app.execute_tool("azure_write", {"command": command, "method": "POST"})).is_error
+
+
+@pytest.mark.asyncio
+async def test_azure_read_rejects_other_posts():
+    app = ToolApplication(FakeAzureCliService(), FakeGraphService(), FakeAzureRestService())
+
+    result = await app.execute_tool(
+        "azure_read",
+        {
+            "command": "subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/"
+            "virtualMachines/vm/deallocate?api-version=2024-07-01",
+            "method": "POST",
+        },
+    )
+
+    assert result.is_error is True
+    assert "azure_write" in result.text
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["az deployment group what-if -g rg -f main.bicep", "az graph query -q 'Resources'"],
+)
+def test_read_only_policy_allows_query_and_what_if(command):
+    from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
+
+    assert ExecutionPolicy(ExecutionPolicyMode.READ_ONLY).check_azure(command).allowed

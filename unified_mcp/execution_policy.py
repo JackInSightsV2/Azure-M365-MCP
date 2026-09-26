@@ -27,7 +27,17 @@ class PolicyDecision:
 class ExecutionPolicy:
     """Authorize tool operations before authentication or external execution."""
 
-    _READ_ONLY_AZURE_ACTIONS = {"check", "exists", "find", "get", "list", "show"}
+    _READ_ONLY_AZURE_ACTIONS = {
+        "check",
+        "exists",
+        "find",
+        "get",
+        "get-instance-view",
+        "list",
+        "query",
+        "show",
+        "what-if",
+    }
 
     def __init__(
         self,

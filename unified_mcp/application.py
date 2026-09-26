@@ -87,6 +87,13 @@ ARM_BASE_URL = "https://management.azure.com/"
 _CLI_TO_ARM_PATHS: Dict[tuple[str, ...], str] = {
     ("account", "list"): "subscriptions?api-version=2022-12-01",
 }
+# ARM endpoints that take POST but only read or predict: Resource Graph queries, Cost
+# Management queries, and deployment What-if.
+_READ_ONLY_ARM_POST_SUFFIXES = (
+    "providers/microsoft.resourcegraph/resources",
+    "providers/microsoft.costmanagement/query",
+    "/whatif",
+)
 _CLI_SIGN_IN_MARKERS = (
     "aadsts",
     "az login",
@@ -243,17 +250,18 @@ class ToolApplication:
         prefer_cli: bool = True,
     ) -> ToolExecutionResult:
         """Call Azure Resource Manager REST, or 'az rest' when only the CLI is available."""
-        if name == AZURE_READ_TOOL and request.method != "GET":
+        read_only = self._is_read_only_arm_request(request)
+        if name == AZURE_READ_TOOL and not read_only:
             return self._error(
                 name,
                 f"{AZURE_READ_TOOL} only sends GET requests. "
                 f"Use {AZURE_WRITE_TOOL} for {request.method}.",
             )
-        if name == AZURE_WRITE_TOOL and request.method == "GET":
+        if name == AZURE_WRITE_TOOL and read_only:
             return self._error(
                 name,
-                f"{AZURE_WRITE_TOOL} only sends POST, PUT, PATCH, or DELETE. "
-                f"Use {AZURE_READ_TOOL} for GET.",
+                f"{AZURE_WRITE_TOOL} only sends requests that change Azure resources. "
+                f"Use {AZURE_READ_TOOL} for this request.",
             )
         if self.arm_service is None:
             if not prefer_cli or self.azure_service is None:
@@ -287,6 +295,16 @@ class ToolApplication:
     def _is_cli_command(cls, command: str) -> bool:
         arguments = cls._split(command)
         return bool(arguments) and arguments[0].lower() == "az"
+
+    @staticmethod
+    def _is_read_only_arm_request(request: AzureToolInput) -> bool:
+        """GET, or a POST to an ARM endpoint that only queries or predicts (never changes)."""
+        if request.method == "GET":
+            return True
+        if request.method != "POST":
+            return False
+        path = request.command.split("?", 1)[0].strip("/").lower()
+        return path.endswith(_READ_ONLY_ARM_POST_SUFFIXES)
 
     @staticmethod
     def _is_cli_sign_in_failure(payload: str) -> bool:

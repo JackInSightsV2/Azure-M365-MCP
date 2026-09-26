@@ -390,7 +390,7 @@ docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
 
 ### Tools
 
-`azure_read` (the Azure Read tool) and `azure_write` (the Azure Write tool) each accept either an Azure CLI command beginning with `az` or an Azure Resource Manager REST path with the `api-version` query parameter. `azure_read` runs only read-only CLI actions (`list`, `show`, `get`, ...) and REST `GET`; anything else is rejected with a pointer to `azure_write`. The client can therefore auto-allow `azure_read` and ask before each `azure_write` call.
+`azure_read` (the Azure Read tool) and `azure_write` (the Azure Write tool) each accept either an Azure CLI command beginning with `az` or an Azure Resource Manager REST path with the `api-version` query parameter. `azure_read` runs only read-only CLI actions (`list`, `show`, `get`, `query`, `what-if`, ...), REST `GET`, and the read-only POST queries (Resource Graph, Cost Management query, deployment What-if); anything else is rejected with a pointer to `azure_write`. The client can therefore auto-allow `azure_read` and ask before each `azure_write` call.
 
 ```text
 az account show

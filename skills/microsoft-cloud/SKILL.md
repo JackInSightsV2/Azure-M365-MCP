@@ -13,7 +13,7 @@ Answer from the tools, not from memory. If a tool returns a device code, run the
 | --- | --- | --- |
 | Read Microsoft 365 / Entra ID | `microsoft365_read` | `command`: Graph v1.0 path (no `https://graph.microsoft.com/v1.0/` prefix). GET only |
 | Change Microsoft 365 / Entra ID | `microsoft365_write` | `command`, `method` (POST/PUT/PATCH/DELETE), `data` (JSON body) |
-| Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`) or ARM path with `api-version` (GET) |
+| Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`, `query`, `what-if`, `get-instance-view`) or ARM path with `api-version` (GET, or POST to Resource Graph / Cost Management query / What-if) |
 | Change Azure | `azure_write` | `command`: any other `az ...`, or ARM path + `method` + `data` |
 
 - Read tools reject writes and Write tools reject reads; the error names the right tool.
@@ -90,7 +90,7 @@ Query tips: always `$select` the fields you need; `$top` (max 999 for users/grou
 | Usage / cost lines | `az consumption usage list --start-date 2026-01-01 --end-date 2026-01-31` | `subscriptions/{sub}/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01` |
 | Budgets | `az consumption budget list` | `subscriptions/{sub}/providers/Microsoft.Consumption/budgets?api-version=2023-05-01` |
 
-**POST reads go through `azure_write`** (the Read tool is GET-only; the client will ask first; nothing changes):
+**Query POSTs go through `azure_read`** (Resource Graph, Cost Management query, and deployment What-if only read, so the Read tool accepts them):
 - Cost totals: POST `subscriptions/{sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01` with `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceGroupName"}]}}`
 - Find a resource by name across subscriptions: POST `providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with `{"query":"Resources | where name =~ 'myvm' | project name, type, subscriptionId, resourceGroup, location, id"}`
 
