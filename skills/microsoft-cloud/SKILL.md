@@ -5,7 +5,7 @@ description: Reference for calling the microsoft365_read, microsoft365_write, az
 
 # Microsoft cloud tools reference
 
-Answer from the tools, not from memory. If a tool returns a device code, run the `setup` skill's sign-in step. If it reports a Tenant policy refusal, relay the message and stop.
+Answer from the tools, not from memory. If a tool asks for sign-in (browser window or device code), run the `setup` skill's sign-in step. If Graph returns 403, relay its suggestion about the missing permission. If it reports a Tenant policy refusal, relay the message and stop.
 
 ## Which tool
 

@@ -45,7 +45,7 @@ SERVER_INSTRUCTIONS = (
     "is in by name, in one call. Try it before searching subscriptions one by one.\n\n"
     "Prefer read operations, inspect the help resources before unfamiliar actions, and "
     "never place credentials in tool arguments. Authentication prompts may require the "
-    "user to complete a device sign-in and retry."
+    "user to complete a sign-in (browser window or device code) and retry."
 )
 
 
@@ -652,7 +652,8 @@ ARM paths need an `api-version`, for example `subscriptions?api-version=2022-12-
 The server uses the Azure CLI and falls back to ARM REST when the CLI is missing or its
 sign-in fails. Examples: `az account show`, `az group list`, `az vm list -d`.
 
-If a tool returns a device code, complete the Interactive sign-in and retry. For common
+If a tool asks for sign-in (a browser window, or a device code), complete the
+Interactive sign-in and retry. For common
 commands and paths, see the `microsoft-cloud` skill:
 https://github.com/JackInSightsV2/Azure-M365-MCP/blob/main/skills/microsoft-cloud/SKILL.md
 """
@@ -663,7 +664,8 @@ https://github.com/JackInSightsV2/Azure-M365-MCP/blob/main/skills/microsoft-clou
 body) take a Microsoft Graph v1.0 path, for example `me`, `users`, `groups`,
 `subscribedSkus`, `me/messages`, `deviceManagement/managedDevices`, `auditLogs/signIns`.
 
-If a tool returns a device code, complete the Interactive sign-in and retry. For common
+If a tool asks for sign-in (a browser window, or a device code), complete the
+Interactive sign-in and retry. For common
 paths and query tips, see the `microsoft-cloud` skill:
 https://github.com/JackInSightsV2/Azure-M365-MCP/blob/main/skills/microsoft-cloud/SKILL.md
 """

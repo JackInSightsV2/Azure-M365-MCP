@@ -24,15 +24,17 @@ Azure CLI commands also need the [Azure CLI](https://learn.microsoft.com/cli/azu
 
 Call `microsoft365_read` with `command: "me"`.
 
-- If it returns a device code and sign-in address, show both to the user exactly as given, ask them to complete sign-in in the browser, wait for them to confirm, then retry the same call.
-- Microsoft Graph and Azure sign in separately. Expect a second device code for Azure in step 3.
+- If it says browser sign-in is required, a browser window has opened: ask the user to complete sign-in there, wait for them to confirm, then retry the same call.
+- If it returns a device code and sign-in address instead (hosts without a browser), show both to the user exactly as given, wait for them to confirm, then retry.
+- Microsoft Graph and Azure sign in separately. Expect a second sign-in for Azure in step 3.
+- A "Permissions requested" consent screen means a permission not yet granted in the Tenant was asked for. The user accepts only if allowed; otherwise they cancel and ask an admin.
 
 **Tenant policy**: if a tool says sign-in was refused by Tenant policy, relay its message verbatim (it names the app and what an admin must approve) and stop. Do not suggest other apps, client IDs, tokens, or any other way around Tenant policy. The user's next step is to ask their tenant admin.
 
 ## 3. Verify
 
 1. `microsoft365_read` with `command: "me"`: report `displayName` and `userPrincipalName`.
-2. `azure_read` with `command: "az account show"`: report the subscription name, ID, and tenant ID. Complete a device code sign-in here too if one is returned, then retry.
+2. `azure_read` with `command: "az account show"`: report the subscription name, ID, and tenant ID. Complete the sign-in here too if one is requested, then retry.
 
 If the user has no Azure subscription, the Azure check can fail while Microsoft 365 works. Say so and finish.
 

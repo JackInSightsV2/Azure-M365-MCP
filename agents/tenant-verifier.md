@@ -65,5 +65,5 @@ Allow for replication delay in Entra ID: if a field has not landed, re-read once
 ## Limits
 
 - If a read is refused by Tenant policy or lacks permission, report the exact message, say what could not be verified, and give CHECK. Never suggest ways to avoid, bypass, or work around Tenant policy, app approval, or Conditional Access.
-- If a tool returns a device code, pass it to the caller for the user to complete sign-in; do not continue until the caller retries.
+- If a tool asks for sign-in (browser window or device code), pass that to the caller for the user to complete sign-in; do not continue until the caller retries.
 - Report only what the reads show. Do not guess current state from memory.

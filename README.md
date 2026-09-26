@@ -226,9 +226,9 @@ Ask the assistant:
 
 > Sign me in to Azure.
 
-The assistant will return a web address and device code. Open the address, enter the code, and complete sign-in. Then retry your original request.
+A browser window opens for Microsoft sign-in, the same as `az login` or `Connect-AzAccount`. Complete sign-in, then retry your original request.
 
-Microsoft Graph may request a separate device-code sign-in the first time it is used. This is normal.
+Microsoft Graph and Azure sign in separately, so a second browser window may open the first time you use the other. This is normal. On a machine without a browser (for example the Docker image), the assistant returns a web address and device code instead; see [Sign-in and permissions](#sign-in-and-permissions).
 
 The Docker configuration uses a named volume so Azure CLI sign-in survives restarts.
 
@@ -326,19 +326,33 @@ Execution policy can only reduce access. Azure RBAC and Microsoft Graph permissi
 
 ### Normal desktop use
 
-Use device-code sign-in. No client secret is required. The server provides a code and Microsoft sign-in address when authentication is needed.
+Sign-in opens a browser window, like `az login` or `Connect-AzAccount`. No client secret is required. Microsoft Graph signs in as Microsoft Graph Command Line Tools (the app `Connect-MgGraph` uses) and Azure as Azure PowerShell (the app `Connect-AzAccount` uses).
+
+Set `SIGN_IN_FLOW=device_code` on a host without a browser (SSH sessions, containers); the server then returns a code and sign-in address instead. The Docker image sets this by default.
+
+### Microsoft Graph permissions
+
+By default the server asks Microsoft Graph only for the permissions your Tenant has already granted to Microsoft Graph Command Line Tools (`https://graph.microsoft.com/.default`), so no consent prompt appears. A request that needs a permission not yet granted returns `403` with a suggestion naming what to do.
+
+To sign in with more permissions, set `GRAPH_SCOPES` to a comma-separated list, for example:
+
+```text
+GRAPH_SCOPES=https://graph.microsoft.com/Mail.Read,https://graph.microsoft.com/Group.ReadWrite.All
+```
+
+A consent prompt then appears for any permission not yet granted. If your Tenant does not let users consent, an admin must approve it; the server never works around that.
 
 Never paste passwords, client secrets, API keys, or access tokens into an AI chat or tool command.
 
 ### Signing in only once
 
-The device-code sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. To keep the sign-in across container restarts, mount a volume at `/home/app/.IdentityService` (the configuration examples above already do this). The Docker Compose setup uses a named `identity-cache` volume for the same purpose. Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
+The sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. To keep the sign-in across container restarts, mount a volume at `/home/app/.IdentityService` (the configuration examples above already do this). The Docker Compose setup uses a named `identity-cache` volume for the same purpose. Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
 
 The Docker image encrypts the cached tokens at rest using a keyring (Secret Service). By default the keyring auto-unlocks; set `KEYRING_PASSWORD` (ideally from a secret store) for password-protected encryption, or `ENABLE_KEYRING=false` to store the cache as a plaintext file instead. The keyring store lives on the same `/home/app/.IdentityService` volume, so remove that volume to force a fresh sign-in. Treat the volume as sensitive regardless of mode.
 
-### When Conditional Access blocks the Azure CLI
+### When the Azure CLI is missing or cannot sign in
 
-Some tenants block the Azure CLI's application id with a Conditional Access policy, so `az login` fails even though your account is valid. The Azure tools then fall back automatically to the Azure Resource Manager REST API, which signs in with a different, configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default) that the policy may allow. See [Tools](#tools).
+If the Azure CLI is not installed, or its sign-in fails, the Azure tools use the Azure Resource Manager REST API instead, signing in as Azure PowerShell (`AZURE_ARM_CLIENT_ID`), the same app `Connect-AzAccount` uses. Whether that sign-in is allowed is decided by your Tenant's policy. See [Tools](#tools).
 
 ### Resource inventory (opt-in)
 
@@ -380,13 +394,17 @@ docker version
 
 Check that the configuration file is in the correct location and contains valid JSON or TOML. Restart the AI client after changing it.
 
-### I received a device code
+### A browser window opened, or I received a device code
 
-Open the supplied Microsoft sign-in address, enter the code, finish sign-in, and retry the request. Azure and Microsoft Graph may each request sign-in.
+Complete sign-in in the browser window, or open the supplied address and enter the code, then retry the request. Azure and Microsoft Graph may each request sign-in.
+
+### I see a "Permissions requested" consent screen
+
+The server asked Microsoft Graph for a permission your Tenant has not granted, usually because `GRAPH_SCOPES` is set. Accept it only if you are allowed to; otherwise cancel and ask an admin. Remove `GRAPH_SCOPES` to use only the permissions already granted.
 
 ### I received `AuthorizationFailed`, `Forbidden`, or `Insufficient privileges`
 
-The signed-in account does not have permission for that operation. Ask an Azure or Microsoft 365 administrator to confirm the account’s role or Graph permissions. Changing execution policy cannot add permission.
+The signed-in account, or the Microsoft Graph permissions granted in your Tenant, do not allow that operation. For Graph, the result suggests which permission to request with `GRAPH_SCOPES`. Otherwise ask an Azure or Microsoft 365 administrator to confirm the account’s role or Graph permissions. Changing execution policy cannot add permission.
 
 ### I received `Execution policy denied...`
 
