@@ -24,6 +24,8 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp
 
 from unified_mcp.application import (
+    MICROSOFT365_READ,
+    MICROSOFT365_WRITE,
     SERVER_INSTRUCTIONS,
     ToolApplication,
     create_resources,
@@ -207,7 +209,8 @@ def create_openapi_app(settings: Settings, application: ToolApplication) -> ASGI
 
     @app.post("/execute-graph-command", response_model=GraphResponse)
     async def execute_graph_command(request: GraphRequest) -> GraphResponse:
-        execution = await application.execute_tool("graph_command", request.model_dump())
+        tool = MICROSOFT365_READ if request.method == "GET" else MICROSOFT365_WRITE
+        execution = await application.execute_tool(tool, request.model_dump())
         return GraphResponse.model_validate(execution.payload)
 
     return HttpSecurityMiddleware(

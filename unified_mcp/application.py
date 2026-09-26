@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol
 
-from mcp.types import Resource, TextContent, Tool
+from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, ValidationError
 
 SERVER_INSTRUCTIONS = (
@@ -17,9 +17,12 @@ SERVER_INSTRUCTIONS = (
     "OneDrive files, users, groups, licenses, Intune devices, sign-in or audit logs, or "
     "Azure subscriptions and resources — do not answer those from general knowledge when "
     "these tools can fetch the real data.\n\n"
-    "- graph_command: Microsoft 365 and Entra ID (Azure AD) via the Microsoft Graph API. "
-    "Read or manage users, groups, licenses, mail, calendar, Teams, files, devices, and "
-    "directory data. GET reads; POST/PUT/PATCH/DELETE write.\n"
+    "- microsoft365_read: read Microsoft 365 and Entra ID (Azure AD) via the Microsoft "
+    "Graph API (GET only). Look up users, groups, licences/licenses, mail, calendar, Teams, "
+    "files, devices, sign-in logs, and directory data.\n"
+    "- microsoft365_write: change Microsoft 365 and Entra ID (Azure AD) via the Microsoft "
+    "Graph API (POST/PUT/PATCH/DELETE). Create or update users, groups, licence/license "
+    "assignments, send mail, manage calendar, Teams, and files.\n"
     "- execute_azure_cli_command: Microsoft Azure resources via the Azure CLI (commands "
     "begin with 'az') — subscriptions, resource groups, virtual machines, storage, "
     "networking, costs.\n"
@@ -29,6 +32,10 @@ SERVER_INSTRUCTIONS = (
     "never place credentials in tool arguments. Authentication prompts may require the "
     "user to complete a device sign-in and retry."
 )
+
+
+MICROSOFT365_READ = "microsoft365_read"
+MICROSOFT365_WRITE = "microsoft365_write"
 
 
 class AzureExecutor(Protocol):
@@ -156,13 +163,24 @@ class ToolApplication:
                 not bool(arm_payload.get("success")),
             )
 
-        if name == "graph_command":
+        if name in (MICROSOFT365_READ, MICROSOFT365_WRITE):
             if self.graph_service is None:
                 return self._error(name, "Graph service not initialized")
             try:
                 graph_request = GraphToolInput.model_validate(arguments)
             except ValidationError as error:
                 return self._error(name, self._validation_message(error))
+            if name == MICROSOFT365_READ and graph_request.method != "GET":
+                return self._error(
+                    name,
+                    f"{MICROSOFT365_READ} only accepts GET; use {MICROSOFT365_WRITE} "
+                    f"for {graph_request.method}",
+                )
+            if name == MICROSOFT365_WRITE and graph_request.method == "GET":
+                return self._error(
+                    name,
+                    f"{MICROSOFT365_WRITE} does not accept GET; use {MICROSOFT365_READ} for reads",
+                )
             graph_payload = await self.graph_service.execute_command(
                 graph_request.command,
                 graph_request.method,
@@ -284,15 +302,15 @@ def create_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="graph_command",
+            name=MICROSOFT365_READ,
             description=(
-                "Connect to the user's Microsoft 365 and Entra ID (Azure AD) via the Microsoft "
-                "Graph API — the way to reach their Microsoft account and tenant. Also known "
-                "as Microsoft 365, M365, Office 365, Azure AD, or Entra. Read or manage users, "
-                "groups, licenses, mail and Outlook, calendar, OneDrive and SharePoint files, "
-                "Teams, devices and Intune, and sign-in or audit logs. Provide a Microsoft "
-                "Graph v1.0 path and HTTP method (GET reads; POST/PUT/PATCH/DELETE write). "
-                "Examples: 'me', 'users', 'users/{id}', 'groups', 'me/messages'."
+                "Read the user's Microsoft 365 and Entra ID (Azure AD) data via the Microsoft "
+                "Graph API — the way to look things up in their Microsoft account and tenant. "
+                "Also known as Microsoft 365, M365, Office 365, Azure AD, or Entra. Look up "
+                "users, groups, licences/licenses, mail and Outlook, calendar, OneDrive and "
+                "SharePoint files, Teams, devices and Intune, and sign-in or audit logs. GET "
+                "only; use microsoft365_write to change anything. Provide a Microsoft Graph "
+                "v1.0 path. Examples: 'me', 'users', 'users/{id}', 'groups', 'me/messages'."
             ),
             inputSchema={
                 "type": "object",
@@ -307,15 +325,48 @@ def create_tools() -> list[Tool]:
                     },
                     "method": {
                         "type": "string",
-                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                        "enum": ["GET"],
                         "default": "GET",
-                        "description": "GET reads; POST, PUT, PATCH, DELETE write",
+                        "description": "Always GET; use microsoft365_write for writes",
                     },
-                    "data": {"type": "object", "description": "JSON body for write requests"},
                 },
                 "required": ["command"],
                 "additionalProperties": False,
             },
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        ),
+        Tool(
+            name=MICROSOFT365_WRITE,
+            description=(
+                "Change the user's Microsoft 365 and Entra ID (Azure AD) data via the "
+                "Microsoft Graph API. Also known as Microsoft 365, M365, Office 365, Azure AD, "
+                "or Entra. Create, update, or delete users and groups, assign licences/licenses, "
+                "send mail, manage calendar events, Teams, OneDrive and SharePoint files, and "
+                "devices. POST/PUT/PATCH/DELETE only; use microsoft365_read for lookups. "
+                "Provide a Microsoft Graph v1.0 path, method, and JSON body. Examples: "
+                "PATCH 'users/{id}', POST 'groups/{id}/members/$ref', POST 'me/sendMail'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Microsoft Graph v1.0 path such as 'users/{id}', "
+                            "'groups/{id}/members/$ref', or 'me/sendMail'"
+                        ),
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["POST", "PUT", "PATCH", "DELETE"],
+                    },
+                    "data": {"type": "object", "description": "JSON body for the request"},
+                },
+                "required": ["command", "method"],
+                "additionalProperties": False,
+            },
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
         ),
     ]
 
@@ -360,8 +411,9 @@ default). Example path: `subscriptions?api-version=2022-12-01`.
     if str(uri) == "graph://help":
         return """# Microsoft 365 and Entra ID tool
 
-Use `graph_command` to reach the user's Microsoft 365 (M365 / Office 365) and Entra ID
-(Azure AD) data through the Microsoft Graph API. Give a Graph v1.0 path and a method.
+Use `microsoft365_read` (GET) to read and `microsoft365_write` (POST, PUT, PATCH, DELETE)
+to change the user's Microsoft 365 (M365 / Office 365) and Entra ID (Azure AD) data through
+the Microsoft Graph API. Give a Graph v1.0 path, and for writes a method and body.
 
 Common paths:
 - Signed-in user: `me`, `me/messages`, `me/events`, `me/drive/root/children`
@@ -370,7 +422,7 @@ Common paths:
 - Devices/Intune: `deviceManagement/managedDevices`
 - Security: `auditLogs/signIns`
 
-The default method is GET; POST, PUT, PATCH, and DELETE require suitable application permissions.
+Writes through `microsoft365_write` require suitable application permissions.
 
 Device-code authentication is used by default. Managed identity and client-secret application
 authentication are supported for automation. `EXECUTION_POLICY=read-only` permits only GET.
