@@ -116,7 +116,11 @@ async def main() -> None:
 
 
 def run() -> None:
-    """Run the asynchronous server from console-script and module entry points."""
+    """Run the server, or the ``install`` subcommand when given, from console scripts."""
+    if len(sys.argv) > 1 and sys.argv[1] == "install":
+        from unified_mcp.installer import main as install_main
+
+        sys.exit(install_main(sys.argv[2:]))
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

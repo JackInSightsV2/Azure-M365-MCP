@@ -53,6 +53,31 @@ You need:
 
 The Docker image already contains the server, Python, and Azure CLI.
 
+## Install with one command
+
+If you have [uv](https://docs.astral.sh/uv/) installed, one command adds the server to your client's configuration. Nothing else needs installing first:
+
+```bash
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp install --client cursor
+```
+
+Replace `cursor` with your client. The entry is named `azure-m365`.
+
+| `--client` | Default file written | `--scope user` writes |
+| --- | --- | --- |
+| `claude-code` | `.mcp.json` in the current directory | `~/.claude.json` |
+| `vscode` | `.vscode/mcp.json` in the current directory | your VS Code user profile's `mcp.json` |
+| `cursor` | `.cursor/mcp.json` in the current directory | `~/.cursor/mcp.json` |
+| `codex` | `~/.codex/config.toml` | (default) |
+| `claude-desktop` | `claude_desktop_config.json` in `~/Library/Application Support/Claude` (macOS), `%APPDATA%\Claude` (Windows), or `~/.config/Claude` (Linux) | (default) |
+
+- The installer adds the entry to the existing file and leaves your other settings and MCP servers as they are. It is safe to run again: an up-to-date entry is left alone, and an older one is replaced.
+- `--scope project|user` picks between the current project and your whole user account. `--dir <path>` uses a different project or home folder.
+- By default the client starts the server with `uvx`, so the machine needs `uv` and, for Azure CLI commands, the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
+- If the file is not plain JSON (for example, it contains comments), the installer stops without changing it. Add the entry by hand in that case.
+
+Restart your client afterwards, then continue from [Sign in](#3-sign-in).
+
 ## Quick start
 
 ### 1. Add the server to your AI client
