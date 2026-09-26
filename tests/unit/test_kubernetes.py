@@ -208,6 +208,8 @@ async def test_connect_rejects_bad_arguments(arguments):
         "kubectl config view",
         "kubectl events --types=Warning",
         "kubectl --context aks-prod get nodes",
+        "kubectl rollout status deployment/web --timeout=60s",
+        "kubectl rollout history deployment/web",
     ],
 )
 async def test_kubernetes_read_runs_read_commands(command):

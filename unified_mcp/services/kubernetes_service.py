@@ -43,6 +43,7 @@ _READ_VERBS = frozenset(
 _READ_SUBCOMMANDS = {
     "auth": frozenset({"can-i", "whoami"}),
     "config": frozenset({"view", "get-contexts", "current-context"}),
+    "rollout": frozenset({"history", "status"}),
 }
 _INTERACTIVE_VERBS = frozenset({"port-forward", "proxy", "attach", "edit"})
 _INTERACTIVE_FLAGS = frozenset({"-i", "-t", "-it", "-ti", "--stdin", "--tty"})
