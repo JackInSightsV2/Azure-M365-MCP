@@ -14,6 +14,7 @@ from unified_mcp.resource_inventory import ResourceInventory
 from unified_mcp.services.azure_cli_service import AzureCliService
 from unified_mcp.services.azure_rest_service import AzureRestService
 from unified_mcp.services.graph_service import GraphService
+from unified_mcp.services.kubernetes_service import KubernetesService
 from unified_mcp.transports import create_mcp_server, run_transport
 
 logging.basicConfig(
@@ -64,23 +65,38 @@ def configure_logging(settings: Settings) -> None:
 def build_application(settings: Settings) -> ToolApplication:
     """Compose real adapters, or explicit fakes for requested test mode."""
     if settings.mock_mode:
-        from unified_mcp.testing import FakeAzureCliService, FakeAzureRestService, FakeGraphService
+        from unified_mcp.testing import (
+            FakeAzureCliService,
+            FakeAzureRestService,
+            FakeGraphService,
+            FakeProcessRunner,
+        )
 
         logger.warning("MOCK_MODE enabled: using deterministic test adapters")
+        runner = FakeProcessRunner()
         return ToolApplication(
             FakeAzureCliService(),
             FakeGraphService(),
             FakeAzureRestService(),
             ResourceInventory.from_settings(settings),
+            (
+                KubernetesService(settings, runner=runner, which=runner.which)  # type: ignore[arg-type]
+                if settings.enable_kubernetes
+                else None
+            ),
         )
 
     policy = settings.build_execution_policy()
     arm_service = AzureRestService(settings, policy=policy) if settings.enable_azure_rest else None
+    kubernetes_service = (
+        KubernetesService(settings, policy=policy) if settings.enable_kubernetes else None
+    )
     return ToolApplication(
         AzureCliService(settings, policy=policy),
         GraphService(settings, policy=policy),
         arm_service,
         ResourceInventory.from_settings(settings),
+        kubernetes_service,
     )
 
 

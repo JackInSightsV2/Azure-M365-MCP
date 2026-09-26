@@ -13,6 +13,7 @@ from unified_mcp.auth import (
     ManagedIdentityProfile,
     ServicePrincipalProfile,
 )
+from unified_mcp.cli_tools import ToolLocator
 from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
 from unified_mcp.process import AsyncProcessRunner, ProcessResult, ProcessTimeoutError
@@ -33,8 +34,12 @@ class AzureCliService:
     ) -> None:
         self.settings = settings
         self.auth_profile = settings.get_azure_auth_profile()
-        self.runner = runner or AsyncProcessRunner()
-        self.login_handler = login_handler or AzureLoginHandler(settings.command_timeout)
+        # az on PATH first, else the Azure CLI installed with this server.
+        tools = ToolLocator.from_settings(settings)
+        self.runner = runner or AsyncProcessRunner(tools)
+        self.login_handler = login_handler or AzureLoginHandler(
+            settings.command_timeout, settings.sign_in_flow, tools=tools
+        )
         self.policy = policy or settings.build_execution_policy()
         self._authenticated = False
         self._auth_lock = asyncio.Lock()

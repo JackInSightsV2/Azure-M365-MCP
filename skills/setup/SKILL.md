@@ -18,7 +18,7 @@ Goal: an Out-of-the-box setup. Install the server, sign in, verify. Do each step
 
   It needs [uv](https://docs.astral.sh/uv/). It merges an `azure-m365` entry into the client's config, keeps other servers, and is safe to re-run. Add `--scope user` for every project, or `--launch docker` to run the container instead. Then tell the user to restart the client and re-run this skill.
 
-Azure CLI commands also need the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Without it, `azure_read` / `azure_write` use Azure Resource Manager REST instead.
+Nothing else needs installing: the server includes the Azure CLI (an `az` on the user's `PATH` is used first). The first start downloads it with the server (about 350 MB), so the tools can take a minute to appear.
 
 ## 2. Interactive sign-in
 
@@ -39,6 +39,14 @@ Call `microsoft365_read` with `command: "me"`.
 If the user has no Azure subscription, the Azure check can fail while Microsoft 365 works. Say so and finish.
 
 Tell the user setup is complete and which surfaces are connected. For writing correct calls, use the `microsoft-cloud` skill.
+
+## Kubernetes / AKS (optional)
+
+Offer this only if the user works with Azure Kubernetes Service (AKS). It needs the server running on their desktop (not Docker) and nothing installed: `kubectl` and `kubelogin` on the user's `PATH` are used, otherwise the first `kubernetes_connect` downloads them once with Microsoft's `az aks install-cli`.
+
+1. Ask for the subscription, resource group, cluster name, and optionally a namespace (or find the cluster with `azure_find_resource` / `azure_read` `az aks list -o table`).
+2. Call `kubernetes_connect` with them. The first call may take a minute while it downloads `kubectl` and `kubelogin`. If it asks for Azure sign-in, a browser window has opened: wait for the user to finish, then retry. If the download fails, relay the manual install commands it gives, wait for the user, then retry.
+3. Verify with `kubernetes_read` `command: "kubectl get nodes"` and report the context and namespace.
 
 ## Resource inventory (opt-in)
 

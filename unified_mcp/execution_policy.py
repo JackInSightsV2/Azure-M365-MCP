@@ -87,6 +87,22 @@ class ExecutionPolicy:
             False, f"Azure CLI command is not recognized as read-only: {normalized}"
         )
 
+    def check_kubernetes(self, arguments: list[str], *, read_only: bool) -> PolicyDecision:
+        """Authorize a parsed kubectl command already classified as read or write.
+
+        In allowlist mode kubectl prefixes (for example ``kubectl get``) are listed in
+        AZURE_COMMAND_ALLOWLIST alongside Azure CLI prefixes.
+        """
+        if self.mode is ExecutionPolicyMode.UNRESTRICTED:
+            return PolicyDecision(True)
+        if self.mode is ExecutionPolicyMode.READ_ONLY:
+            if read_only:
+                return PolicyDecision(True)
+            return PolicyDecision(False, "kubectl changes are disabled by read-only policy")
+        if any(self._matches_token_prefix(arguments, prefix) for prefix in self.azure_allowlist):
+            return PolicyDecision(True)
+        return PolicyDecision(False, "kubectl command is not in AZURE_COMMAND_ALLOWLIST")
+
     @classmethod
     def _is_read_only_action(cls, action: str) -> bool:
         """Exact read actions, plus variants such as 'list-locations' or 'show-tags'."""

@@ -91,7 +91,7 @@ Reference: [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
 ## Without Docker
 
-Install Python 3.11–3.14, Azure CLI, and the package:
+Install Python 3.11–3.14 and the package (it includes the Azure CLI):
 
 ```bash
 python -m pip install .

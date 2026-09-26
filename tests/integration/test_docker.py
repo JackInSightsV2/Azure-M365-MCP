@@ -172,6 +172,9 @@ async def assert_mcp_contract(session):
         "azure_find_resource",
         "microsoft365_read",
         "microsoft365_write",
+        "kubernetes_connect",
+        "kubernetes_read",
+        "kubernetes_write",
     }
     result = await session.call_tool("microsoft365_read", {"command": "me"})
     assert result.isError is not True
@@ -228,6 +231,9 @@ async def test_stdio_mcp_tool_call(docker_compose_env):
                 "azure_find_resource",
                 "microsoft365_read",
                 "microsoft365_write",
+                "kubernetes_connect",
+                "kubernetes_read",
+                "kubernetes_write",
             }
 
             result = await session.call_tool(

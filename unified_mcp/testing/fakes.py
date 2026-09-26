@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
+
+from unified_mcp.process import ProcessResult
 
 
 class FakeAzureCliService:
@@ -200,3 +203,42 @@ class FakeGraphService:
 
     async def close(self) -> None:
         """Match the production service lifecycle contract."""
+
+
+class FakeProcessRunner:
+    """Process runner that records calls and answers from scripted results.
+
+    ``results`` maps an argument prefix (a tuple such as ``("kubectl", "get")``) to the
+    result of any call starting with it; the longest matching prefix wins, and calls with
+    no match succeed with ``"Mock output for command: ..."``. Programs named in
+    ``missing`` raise ``FileNotFoundError`` and are absent from ``which``, the way a tool
+    that is not installed behaves.
+    """
+
+    def __init__(
+        self,
+        results: Optional[Mapping[tuple[str, ...], ProcessResult]] = None,
+        missing: Sequence[str] = (),
+    ) -> None:
+        self.results = dict(results or {})
+        self.missing = set(missing)
+        self.calls: List[List[str]] = []
+
+    async def run(
+        self,
+        arguments: Sequence[str],
+        timeout: float,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> ProcessResult:
+        call = list(arguments)
+        self.calls.append(call)
+        if call and call[0] in self.missing:
+            raise FileNotFoundError(2, "No such file or directory", call[0])
+        matches = [prefix for prefix in self.results if tuple(call[: len(prefix)]) == prefix]
+        if matches:
+            return self.results[max(matches, key=len)]
+        return ProcessResult(0, f"Mock output for command: {' '.join(call)}", "")
+
+    def which(self, name: str) -> Optional[str]:
+        """Stand-in for ``shutil.which``: every program except the missing ones exists."""
+        return None if name in self.missing else f"/usr/local/bin/{name}"

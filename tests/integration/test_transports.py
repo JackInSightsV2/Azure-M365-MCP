@@ -27,6 +27,24 @@ def test_mcp_initialization_includes_operational_instructions():
     assert "microsoft365_read" in options.instructions
     assert "microsoft365_write" in options.instructions
     assert "azure_find_resource" in options.instructions
+    assert "kubernetes_connect" in options.instructions
+    assert "kubernetes_read" in options.instructions
+    assert "kubernetes_write" in options.instructions
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_list_follows_enable_kubernetes():
+    from mcp.types import ListToolsRequest
+
+    names = {}
+    for enabled in (True, False):
+        server = create_mcp_server(Settings(ENABLE_KUBERNETES=enabled), make_application())
+        handler = server.request_handlers[ListToolsRequest]
+        response = await handler(ListToolsRequest(method="tools/list"))
+        names[enabled] = {tool.name for tool in response.root.tools}
+
+    assert "kubernetes_read" in names[True]
+    assert not {name for name in names[False] if name.startswith("kubernetes_")}
 
 
 @pytest.mark.asyncio

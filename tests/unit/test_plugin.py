@@ -9,7 +9,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_MANIFEST = REPOSITORY_ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE_MANIFEST = REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json"
 VERIFIER_AGENT = REPOSITORY_ROOT / "agents" / "tenant-verifier.md"
-READ_TOOLS = {"microsoft365_read", "azure_read", "azure_find_resource"}
+READ_TOOLS = {"microsoft365_read", "azure_read", "azure_find_resource", "kubernetes_read"}
 COMPONENT_KEYS = ("skills", "commands", "agents", "hooks", "outputStyles", "lspServers")
 
 

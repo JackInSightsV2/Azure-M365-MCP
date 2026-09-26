@@ -40,6 +40,7 @@ Examples include:
 - “Find the details for user@example.com.”
 - “List Entra ID groups.”
 - “Show the managed devices in Intune.”
+- “Connect to the aks-prod cluster and list the pods that are not running.”
 
 The available results depend on the permissions of the account that signs in.
 
@@ -52,6 +53,8 @@ You need:
 3. An Azure or Microsoft 365 account with permission to view or manage the information you need.
 
 The Docker image already contains the server, Python, and Azure CLI.
+
+For the optional [Kubernetes (AKS) tools](#kubernetes-aks), run the server on your desktop with `uvx` (the plugin and the installer do). Nothing else needs installing: the server includes the Azure CLI, and the first AKS use downloads `kubectl` and `kubelogin` with Microsoft's `az aks install-cli`.
 
 ## Claude Code plugin
 
@@ -90,7 +93,7 @@ Replace `cursor` with your client. The entry is named `azure-m365`.
 
 - The installer adds the entry to the existing file and leaves your other settings and MCP servers as they are. It is safe to run again: an up-to-date entry is left alone, and an older one is replaced.
 - `--scope project|user` picks between the current project and your whole user account. `--dir <path>` uses a different project or home folder.
-- By default the client starts the server with `uvx`, so the machine needs `uv` and, for Azure CLI commands, the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
+- By default the client starts the server with `uvx`, so the machine needs only `uv`. The server includes the Azure CLI (an `az` already on your `PATH` is used first); the first start downloads it with the server, about 350 MB, so it can take a minute. Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
 - If the file is not plain JSON (for example, it contains comments), the installer stops without changing it. Add the entry by hand in that case.
 
 Restart your client afterwards, then continue from [Sign in](#3-sign-in).
@@ -366,6 +369,33 @@ uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsof
 
 `off` withdraws consent and deletes the file. For Docker, run the same subcommand in the image with the identity volume mounted (`docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`). Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
 
+### Kubernetes (AKS)
+
+The Kubernetes tools run `az`, `kubelogin`, and `kubectl` with your own kubeconfig (`KUBECONFIG` is respected) and the same access you have in a terminal. They are for desktop use and need nothing installed beyond `uv`:
+
+- Tools already on your `PATH` are used first.
+- Otherwise `az` is the Azure CLI installed with the server.
+- Otherwise, on first use (`kubernetes_connect`, or `kubernetes_read` / `kubernetes_write` when `kubectl` is missing), the server downloads `kubectl` and `kubelogin` once with Microsoft's `az aks install-cli --install-location <dir>/kubectl --kubelogin-install-location <dir>/kubelogin`, where `<dir>` is `~/.IdentityService/bin` (set `TOOLS_DIR` to change it). Later calls reuse them.
+
+If the download is blocked (offline, proxy), the tool says so and gives the manual install commands, for example:
+
+```bash
+brew install kubectl Azure/kubelogin/kubelogin                                    # macOS
+winget install -e --id Kubernetes.kubectl; winget install -e --id Microsoft.Azure.Kubelogin   # Windows
+az aks install-cli                                                                # any OS with the Azure CLI
+```
+
+`kubernetes_connect` (subscription, resource group, cluster, optional namespace) does what you would do by hand, stopping at the first step that fails:
+
+```bash
+az account set --subscription <sub>
+az aks get-credentials --resource-group <rg> --name <cluster> --overwrite-existing
+kubelogin convert-kubeconfig -l azurecli
+kubectl config set-context --current --namespace=<ns>
+```
+
+If the Azure CLI is not signed in, it starts `az login` first, following `SIGN_IN_FLOW` (a browser window by default; device code only with `SIGN_IN_FLOW=device_code`). Then use `kubernetes_read` for `get`, `describe`, `logs`, `top`, `events`, and other reads, and `kubernetes_write` for every other kubectl command. Interactive and long-running commands (`-it`, `edit`, `attach`, `port-forward`, `proxy`, `--watch`, `logs -f`) are rejected. Set `ENABLE_KUBERNETES=false` to hide the tools.
+
 ### Unattended or shared server
 
 Administrators can configure managed identity or a service principal through environment variables. See [env.example](env.example). These options are intended for managed deployments, not normal desktop setup.
@@ -456,6 +486,22 @@ data: {"displayName": "New name"}
 
 Graph writes require an application or managed identity with the necessary Microsoft Graph application permissions.
 
+`kubernetes_connect` connects kubectl to an AKS cluster once; `kubernetes_read` (read-only kubectl commands) and `kubernetes_write` (every other kubectl command) take a `command` beginning with `kubectl` plus optional `context` and `namespace`. See [Kubernetes (AKS)](#kubernetes-aks).
+
+```text
+# kubernetes_connect
+subscription: Contoso Prod
+resource_group: rg-aks
+cluster: aks-prod
+namespace: payments
+
+# kubernetes_read
+command: kubectl get pods -o wide
+
+# kubernetes_write
+command: kubectl rollout restart deployment/web
+```
+
 ### Transport options
 
 | Transport | Setting | Endpoint | Use |
@@ -469,7 +515,7 @@ For HTTP deployments, set `MCP_API_KEY`, use TLS, and place the server behind ne
 
 ### Run without Docker
 
-Install Python 3.11–3.14 and Azure CLI, then install the package:
+Install Python 3.11–3.14, then install the package (it includes the Azure CLI):
 
 ```bash
 python -m pip install .
