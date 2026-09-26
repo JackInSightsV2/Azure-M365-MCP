@@ -17,6 +17,7 @@ from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
 from unified_mcp.process import AsyncProcessRunner, ProcessResult, ProcessTimeoutError
 from unified_mcp.services.azure_login_handler import AzureLoginHandler
+from unified_mcp.tenant_policy import AZURE_CLI_CLIENT_ID, detect_tenant_policy_refusal
 
 
 class AzureCliService:
@@ -61,6 +62,9 @@ class AzureCliService:
             auth_error = await self._ensure_authenticated()
             if auth_error is not None:
                 self.logger.error("Configured Azure authentication failed; command blocked")
+                refusal = self._tenant_policy_error(auth_error)
+                if refusal is not None:
+                    return refusal
                 return (
                     "Error: Azure authentication failed; command was not executed. " f"{auth_error}"
                 )
@@ -176,8 +180,26 @@ class AzureCliService:
 
         if result.returncode != 0:
             error_message = result.stderr or "Command failed"
+            refusal = self._tenant_policy_error(error_message) or self._tenant_policy_error(
+                self.login_handler.last_login_error
+            )
+            if refusal is not None:
+                return refusal
             return f"Command: {self._redact_sensitive_command(command)}\nError: {error_message}"
         return "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+
+    def _refused_client_id(self) -> str | None:
+        profile = self.auth_profile
+        if isinstance(profile, InteractiveAzureProfile):
+            return AZURE_CLI_CLIENT_ID
+        return profile.client_id
+
+    def _tenant_policy_error(self, error_text: str | None) -> str | None:
+        """Return a plain Tenant policy message when ``error_text`` is such a refusal."""
+        refusal = detect_tenant_policy_refusal(error_text, self._refused_client_id())
+        if refusal is None:
+            return None
+        return f"Error: {refusal.message}\n\nDetails:\n{error_text}"
 
     async def close(self) -> None:
         """Terminate any interactive login still owned by this service."""

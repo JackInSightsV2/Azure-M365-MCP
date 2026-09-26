@@ -18,12 +18,16 @@ class AzureLoginHandler:
         self.current_process: asyncio.subprocess.Process | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        # Output of the most recent device login that failed, kept so a later command
+        # can explain why sign-in did not complete (for example a Tenant policy refusal).
+        self.last_login_error: str | None = None
 
     async def handle_az_login_command(self, command: str) -> str:
         """Force device authentication and return the sign-in prompt promptly."""
         arguments = self._device_login_arguments(command)
         async with self._lock:
             await self._stop_current()
+            self.last_login_error = None
             try:
                 process = await asyncio.create_subprocess_exec(
                     *arguments,
@@ -111,13 +115,15 @@ class AzureLoginHandler:
 
     async def _finish_login(self, process: asyncio.subprocess.Process) -> None:
         try:
+            tail: list[str] = []
             if process.stdout is not None:
-                async for _line in process.stdout:
-                    pass
+                async for line in process.stdout:
+                    tail = [*tail[-19:], line.decode("utf-8", errors="replace").rstrip()]
             return_code = await process.wait()
             if return_code == 0:
                 self.logger.info("Azure device login completed")
             else:
+                self.last_login_error = "\n".join(part for part in tail if part) or None
                 self.logger.warning("Azure device login failed with code %s", return_code)
         except asyncio.CancelledError:
             raise
