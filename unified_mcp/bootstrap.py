@@ -24,9 +24,14 @@ import subprocess
 import sys
 from typing import Optional
 
+from unified_mcp.cli_tools import ToolLocator
+from unified_mcp.config import Settings
+
 
 def _run(arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(arguments, capture_output=True, text=True, check=False)
+    # az on PATH first, else the Azure CLI installed with this package.
+    arguments, env = ToolLocator(Settings().tools_directory()).prepare(arguments)
+    return subprocess.run(arguments, capture_output=True, text=True, check=False, env=env)
 
 
 def _current_subscription() -> Optional[dict]:

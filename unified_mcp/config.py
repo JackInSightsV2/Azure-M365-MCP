@@ -110,8 +110,11 @@ class Settings(BaseSettings):
     )
 
     # Kubernetes (AKS) tools: kubernetes_connect, kubernetes_read, kubernetes_write. They
-    # run the user's own az, kubelogin, and kubectl with the user's kubeconfig.
+    # run az, kubelogin, and kubectl with the user's kubeconfig: the user's own tools when
+    # they are on PATH, otherwise the bundled az and a kubectl and kubelogin downloaded on
+    # first use with 'az aks install-cli' into TOOLS_DIR.
     enable_kubernetes: bool = Field(default=True, alias="ENABLE_KUBERNETES")
+    tools_dir: Optional[str] = Field(default=None, alias="TOOLS_DIR")
 
     # Custom app registration settings (optional - enables read/write mode)
     custom_client_id: Optional[str] = Field(default=None, alias="GRAPH_APP_CLIENT_ID")
@@ -349,6 +352,10 @@ class Settings(BaseSettings):
     def token_cache_directory(self) -> str:
         """Return the per-user directory that holds the token cache and sign-in records."""
         return self.token_cache_dir or os.path.expanduser(os.path.join("~", ".IdentityService"))
+
+    def tools_directory(self) -> str:
+        """Return the per-user directory for downloaded kubectl and kubelogin."""
+        return self.tools_dir or os.path.join(self.token_cache_directory(), "bin")
 
     def _auth_record_path(self, label: str) -> str:
         """Return the file that persists a device-code sign-in for one client."""

@@ -5,6 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from unified_mcp.cli_tools import ToolLocator
 
 
 class ProcessTimeoutError(TimeoutError):
@@ -24,8 +28,12 @@ class AsyncProcessRunner:
     """Run commands without a shell and enforce termination on timeout.
 
     Standard input is closed, so a command never reads the MCP stdio stream or waits on
-    a prompt.
+    a prompt. With a ``ToolLocator``, the program is resolved through it (the user's PATH,
+    then the bundled or downloaded tools) and runs with those tool directories on PATH.
     """
+
+    def __init__(self, tools: "ToolLocator | None" = None) -> None:
+        self.tools = tools
 
     async def run(
         self,
@@ -33,6 +41,8 @@ class AsyncProcessRunner:
         timeout: float,
         env: Mapping[str, str] | None = None,
     ) -> ProcessResult:
+        if self.tools is not None:
+            arguments, env = self.tools.prepare(arguments, env)
         if env is None:
             process = await asyncio.create_subprocess_exec(
                 *arguments,

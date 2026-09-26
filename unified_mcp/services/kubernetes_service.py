@@ -1,4 +1,9 @@
-"""Kubernetes (AKS) access through the user's own kubectl, kubelogin, and Azure CLI."""
+"""Kubernetes (AKS) access through kubectl, kubelogin, and the Azure CLI.
+
+The user's own tools on PATH win. Otherwise az is the Azure CLI installed with this
+server, and kubectl and kubelogin are downloaded once, on first use, with Microsoft's
+'az aks install-cli' into the per-user tools directory (TOOLS_DIR).
+"""
 
 from __future__ import annotations
 
@@ -12,15 +17,24 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from unified_mcp.cli_tools import ToolLocator
 from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
 from unified_mcp.process import AsyncProcessRunner, ProcessResult, ProcessTimeoutError
 
-INSTALL_HINT = (
-    "Install them with 'brew install azure-cli kubectl Azure/kubelogin/kubelogin' (macOS), "
-    "or install the Azure CLI and run 'az aks install-cli' to add kubectl and kubelogin. "
-    "The Docker image does not include kubectl or kubelogin; run the server on the desktop "
-    "for Kubernetes."
+AZ_INSTALL_HINT = (
+    "The server installs the Azure CLI with itself, so its environment is incomplete: run "
+    "'uv cache clean unified-microsoft-mcp' and restart your AI client so uvx reinstalls it, "
+    "or install the Azure CLI yourself (https://aka.ms/installazurecli, or "
+    "'brew install azure-cli' on macOS)."
+)
+MANUAL_INSTALL_HINT = (
+    "Install kubectl and kubelogin yourself and make sure they are on PATH: "
+    "'az aks install-cli' (may need sudo or an administrator prompt), "
+    "'brew install kubectl Azure/kubelogin/kubelogin' (macOS), or "
+    "'winget install -e --id Kubernetes.kubectl' and "
+    "'winget install -e --id Microsoft.Azure.Kubelogin' (Windows). "
+    "Then call the tool again."
 )
 
 # kubectl verbs that only read. Every other verb changes the cluster or local config.
@@ -223,22 +237,79 @@ class KubernetesService:
         policy: ExecutionPolicy | None = None,
         which: Callable[[str], Optional[str]] = shutil.which,
         environ: Mapping[str, str] | None = None,
+        tools: ToolLocator | None = None,
     ) -> None:
         self.settings = settings
-        self.runner = runner or AsyncProcessRunner()
+        self.tools = tools or ToolLocator.from_settings(settings, which=which)
+        self.runner = runner or AsyncProcessRunner(self.tools)
         self.policy = policy or settings.build_execution_policy()
-        self.which = which
         self.environ = os.environ if environ is None else environ
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_commands)
+        self._install_lock = asyncio.Lock()
         self.logger = logging.getLogger(__name__)
 
     def missing_tools(self, names: Sequence[str]) -> list[str]:
-        """Return the command-line tools in ``names`` that are not on PATH."""
-        return [name for name in names if self.which(name) is None]
+        """Return the tools in ``names`` found neither on PATH nor with this server."""
+        return [name for name in names if self.tools.find(name) is None]
 
     @staticmethod
     def missing_tools_message(missing: Sequence[str]) -> str:
-        return f"{', '.join(missing)} not found on this machine's PATH. {INSTALL_HINT}"
+        hint = AZ_INSTALL_HINT if "az" in missing else MANUAL_INSTALL_HINT
+        return f"{', '.join(missing)} not found. {hint}"
+
+    def download_failed_message(self, missing: Sequence[str], detail: str) -> str:
+        return (
+            f"{', '.join(missing)} not found, and downloading kubectl and kubelogin with "
+            f"'az aks install-cli' into {self.tools.tools_dir} failed:\n"
+            f"{redact(detail.strip())}\n\n{MANUAL_INSTALL_HINT}"
+        )
+
+    async def ensure_tools(self, names: Sequence[str]) -> Optional[Dict[str, Any]]:
+        """Make ``names`` available, downloading kubectl and kubelogin once when missing.
+
+        Returns a failure when a tool is still missing, otherwise None.
+        """
+        if not self.missing_tools(names):
+            return None
+        async with self._install_lock:
+            # An earlier call may have finished the download while this one waited.
+            missing = self.missing_tools(names)
+            if not missing:
+                return None
+            if "az" in missing or self.tools.find("az") is None:
+                # Without az, nothing can download kubectl and kubelogin.
+                missing = ["az", *(name for name in missing if name != "az")]
+                return self._failure(self.missing_tools_message(missing), missing_tools=missing)
+            detail = await self._install_kubernetes_cli()
+            missing = self.missing_tools(names)
+        if missing:
+            return self._failure(
+                self.download_failed_message(missing, detail or "the tools were not installed"),
+                missing_tools=missing,
+            )
+        return None
+
+    async def _install_kubernetes_cli(self) -> Optional[str]:
+        """Run 'az aks install-cli' into the tools directory; return its error, or None."""
+        try:
+            os.makedirs(self.tools.tools_dir, exist_ok=True)
+        except OSError as error:
+            return str(error)
+        arguments = [
+            "az",
+            "aks",
+            "install-cli",
+            "--install-location",
+            self.tools.installed_path("kubectl"),
+            "--kubelogin-install-location",
+            self.tools.installed_path("kubelogin"),
+            "--only-show-errors",
+        ]
+        self.logger.info("Downloading kubectl and kubelogin into %s", self.tools.tools_dir)
+        result = await self._run(arguments)
+        if result.returncode != 0:
+            return result.stderr or result.stdout or f"exit code {result.returncode}"
+        return None
 
     async def run_kubectl(
         self,
@@ -253,9 +324,9 @@ class KubernetesService:
         )
         if not decision.allowed:
             return self._failure(f"Execution policy denied command - {decision.reason}")
-        missing = self.missing_tools(["kubectl"])
-        if missing:
-            return self._failure(self.missing_tools_message(missing), missing_tools=missing)
+        unavailable = await self.ensure_tools(["kubectl"])
+        if unavailable is not None:
+            return unavailable
 
         arguments = list(command.arguments)
         if context is not None:
@@ -282,7 +353,7 @@ class KubernetesService:
 
         Stops at the first step that fails and returns that step's output.
         """
-        refusal = self.preflight_connect(resource_group, cluster)
+        refusal = await self.preflight_connect(resource_group, cluster)
         if refusal is not None:
             return refusal
 
@@ -322,16 +393,19 @@ class KubernetesService:
             "completed_steps": completed,
         }
 
-    def preflight_connect(self, resource_group: str, cluster: str) -> Optional[Dict[str, Any]]:
-        """Return a failure when policy forbids connecting or a required tool is missing."""
+    async def preflight_connect(
+        self, resource_group: str, cluster: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return a failure when policy forbids connecting or a required tool is missing.
+
+        Downloads kubectl and kubelogin first when neither PATH nor an earlier download
+        has them.
+        """
         get_credentials = self._get_credentials_arguments(resource_group, cluster)
         decision = self.policy.check_azure(shlex.join(get_credentials))
         if not decision.allowed:
             return self._failure(f"Execution policy denied command - {decision.reason}")
-        missing = self.missing_tools(["az", "kubelogin", "kubectl"])
-        if missing:
-            return self._failure(self.missing_tools_message(missing), missing_tools=missing)
-        return None
+        return await self.ensure_tools(["az", "kubelogin", "kubectl"])
 
     def _get_credentials_arguments(self, resource_group: str, cluster: str) -> list[str]:
         arguments = [

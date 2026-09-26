@@ -107,7 +107,7 @@ Query tips: always `$select` the fields you need; `$top` (max 999 for users/grou
 
 ## Kubernetes / AKS
 
-Connect once with `kubernetes_connect` (it runs `az account set`, `az aks get-credentials --overwrite-existing`, `kubelogin convert-kubeconfig -l azurecli`, and sets the namespace). It reports the current context and namespace; the connection lasts in the user's kubeconfig, so don't reconnect before every command. If it names a missing tool, relay the install command; if it asks for Azure sign-in, wait for the user, then retry. Don't know the resource group? `azure_read` `az aks list -o table`.
+Connect once with `kubernetes_connect` (it runs `az account set`, `az aks get-credentials --overwrite-existing`, `kubelogin convert-kubeconfig -l azurecli`, and sets the namespace). It reports the current context and namespace; the connection lasts in the user's kubeconfig, so don't reconnect before every command. The first call downloads `kubectl` and `kubelogin` when the user has none (via `az aks install-cli`); if that download fails, relay the manual install commands it gives. If it asks for Azure sign-in, wait for the user, then retry. Don't know the resource group? `azure_read` `az aks list -o table`.
 
 Then pass a `command` beginning with `kubectl`. `context` and `namespace` are added as `--context` / `--namespace`; prefer them over editing the kubeconfig.
 

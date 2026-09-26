@@ -1,6 +1,10 @@
+import os
+import tempfile
+
 import pytest
 
 from unified_mcp.application import ToolApplication, create_tools
+from unified_mcp.cli_tools import ToolLocator
 from unified_mcp.config import Settings
 from unified_mcp.process import ProcessResult
 from unified_mcp.services.kubernetes_service import KubernetesService, redact
@@ -17,15 +21,24 @@ CONNECT_ARGUMENTS = {
     "cluster": "aks-prod",
     "namespace": "payments",
 }
+# Stands in for the server's own bin directory and the tools directory, so the tools the
+# test environment happens to have (such as the bundled az) never leak in.
+ABSENT_DIRECTORY = os.path.join(tempfile.gettempdir(), "unified-mcp-tests-absent")
 
 
-def make_app(runner=None, *, azure=None, environ=None, **settings):
+def make_app(runner=None, *, azure=None, environ=None, tools_dir=None, which=None, **settings):
     runner = runner or FakeProcessRunner()
+    tools = ToolLocator(
+        str(tools_dir or ABSENT_DIRECTORY),
+        bundled_dir=ABSENT_DIRECTORY,
+        which=which or runner.which,
+        windows=False,
+    )
     service = KubernetesService(
         Settings(**settings),
         runner=runner,
-        which=runner.which,
         environ=environ or {},
+        tools=tools,
     )
     app = ToolApplication(
         azure or FakeAzureCliService(),
@@ -134,18 +147,160 @@ async def test_connect_stops_at_the_first_failing_step():
     assert result.payload["completed_steps"] == ["az account set --subscription 'Contoso Prod'"]
 
 
+class InstallingRunner(FakeProcessRunner):
+    """Fake runner whose 'az aks install-cli' writes kubectl and kubelogin where asked."""
+
+    def __init__(self, results=None, *, install=True):
+        super().__init__(results)
+        self.install = install
+
+    async def run(self, arguments, timeout, env=None):
+        result = await super().run(arguments, timeout, env)
+        if self.install and list(arguments[:3]) == ["az", "aks", "install-cli"]:
+            for flag in ("--install-location", "--kubelogin-install-location"):
+                path = arguments[arguments.index(flag) + 1]
+                with open(path, "w", encoding="utf-8"):
+                    pass
+                os.chmod(path, 0o755)
+        return result
+
+
+def not_on_path(*names):
+    """A ``which`` that finds every program except ``names``."""
+    return lambda name: None if name in names else f"/usr/local/bin/{name}"
+
+
+def install_cli_call(tools_dir):
+    return [
+        "az",
+        "aks",
+        "install-cli",
+        "--install-location",
+        os.path.join(str(tools_dir), "kubectl"),
+        "--kubelogin-install-location",
+        os.path.join(str(tools_dir), "kubelogin"),
+        "--only-show-errors",
+    ]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["az", "kubelogin", "kubectl"])
-async def test_connect_names_a_missing_tool_and_how_to_install(missing):
-    app, runner = make_app(FakeProcessRunner(missing=[missing]))
+async def test_connect_without_az_explains_how_to_get_it():
+    app, runner = make_app(FakeProcessRunner(missing=["az"]))
 
     result = await app.execute_tool("kubernetes_connect", CONNECT_ARGUMENTS)
 
     assert result.is_error is True
-    assert f"{missing} not found" in result.text
-    assert "brew install azure-cli kubectl Azure/kubelogin/kubelogin" in result.text
-    assert "az aks install-cli" in result.text
+    assert "az not found" in result.text
+    assert "https://aka.ms/installazurecli" in result.text
     assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_connect_without_az_cannot_download_kubectl():
+    app, runner = make_app(which=not_on_path("az", "kubectl"))
+
+    result = await app.execute_tool("kubernetes_connect", CONNECT_ARGUMENTS)
+
+    assert result.is_error is True
+    assert "az, kubectl not found" in result.text
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_connect_downloads_kubectl_and_kubelogin_once(tmp_path):
+    tools_dir = tmp_path / "bin"
+    app, runner = make_app(
+        InstallingRunner(), tools_dir=tools_dir, which=not_on_path("kubectl", "kubelogin")
+    )
+
+    first = await app.execute_tool("kubernetes_connect", CONNECT_ARGUMENTS)
+    second = await app.execute_tool("kubernetes_connect", CONNECT_ARGUMENTS)
+    read = await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
+
+    assert first.is_error is False, first.text
+    assert second.is_error is False and read.is_error is False
+    installs = [call for call in runner.calls if call[:3] == ["az", "aks", "install-cli"]]
+    assert installs == [install_cli_call(tools_dir)]
+    assert runner.calls[0] == install_cli_call(tools_dir)
+    assert (tools_dir / "kubectl").is_file() and (tools_dir / "kubelogin").is_file()
+
+
+@pytest.mark.asyncio
+async def test_kubectl_on_path_is_used_without_downloading(tmp_path):
+    app, runner = make_app(tools_dir=tmp_path / "bin")
+
+    await app.execute_tool("kubernetes_connect", CONNECT_ARGUMENTS)
+    await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
+
+    assert not [call for call in runner.calls if "install-cli" in call]
+    assert not (tmp_path / "bin").exists()
+
+
+@pytest.mark.asyncio
+async def test_previously_downloaded_kubectl_is_reused(tmp_path):
+    for name in ("kubectl", "kubelogin"):
+        path = tmp_path / name
+        path.write_text("")
+        path.chmod(0o755)
+    app, runner = make_app(tools_dir=tmp_path, which=not_on_path("kubectl", "kubelogin"))
+
+    result = await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
+
+    assert result.is_error is False
+    assert runner.calls == [["kubectl", "get", "pods"]]
+
+
+@pytest.mark.asyncio
+async def test_kubernetes_read_downloads_missing_kubectl_then_runs(tmp_path):
+    app, runner = make_app(
+        InstallingRunner(), tools_dir=tmp_path, which=not_on_path("kubectl", "kubelogin")
+    )
+
+    result = await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
+
+    assert result.is_error is False, result.text
+    assert runner.calls == [install_cli_call(tmp_path), ["kubectl", "get", "pods"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["kubernetes_connect", "kubernetes_read"])
+async def test_failed_download_gives_manual_install_commands(tmp_path, tool):
+    runner = InstallingRunner(
+        {
+            ("az", "aks", "install-cli"): ProcessResult(
+                1, "", "ERROR: Connection error while attempting to download client"
+            )
+        },
+        install=False,
+    )
+    app, runner = make_app(runner, tools_dir=tmp_path, which=not_on_path("kubectl", "kubelogin"))
+    arguments = (
+        CONNECT_ARGUMENTS if tool == "kubernetes_connect" else {"command": "kubectl get pods"}
+    )
+
+    result = await app.execute_tool(tool, arguments)
+
+    assert result.is_error is True
+    assert "kubectl not found" in result.text
+    assert "az aks install-cli" in result.text
+    assert str(tmp_path) in result.text
+    assert "Connection error" in result.text
+    assert "brew install kubectl Azure/kubelogin/kubelogin" in result.text
+    assert "winget install -e --id Kubernetes.kubectl" in result.text
+    assert runner.calls == [install_cli_call(tmp_path)]
+
+
+@pytest.mark.asyncio
+async def test_download_that_installs_nothing_is_reported(tmp_path):
+    app, runner = make_app(
+        InstallingRunner(install=False), tools_dir=tmp_path, which=not_on_path("kubectl")
+    )
+
+    result = await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
+
+    assert result.is_error is True
+    assert "the tools were not installed" in result.text
+    assert result.payload["missing_tools"] == ["kubectl"]
 
 
 @pytest.mark.asyncio
@@ -357,8 +512,9 @@ async def test_kubectl_diff_with_differences_is_not_an_error():
 
 
 @pytest.mark.asyncio
-async def test_missing_kubectl_explains_how_to_install():
-    app, runner = make_app(FakeProcessRunner(missing=["kubectl"]))
+async def test_kubectl_vanishing_mid_run_explains_how_to_install():
+    runner = FakeProcessRunner(missing=["kubectl"])
+    app, runner = make_app(runner, which=not_on_path())
 
     result = await app.execute_tool("kubernetes_read", {"command": "kubectl get pods"})
 
@@ -383,7 +539,9 @@ async def test_read_only_policy_allows_kubectl_reads_only():
 @pytest.mark.parametrize("tool", ["kubernetes_connect", "kubernetes_read", "kubernetes_write"])
 async def test_kubernetes_tools_report_when_disabled(tool):
     app = ToolApplication(FakeAzureCliService(), FakeGraphService())
-    arguments = CONNECT_ARGUMENTS if tool == "kubernetes_connect" else {"command": "kubectl x"}
+    arguments = (
+        CONNECT_ARGUMENTS if tool == "kubernetes_connect" else {"command": "kubectl get pods"}
+    )
 
     result = await app.execute_tool(tool, arguments)
 

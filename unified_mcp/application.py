@@ -337,7 +337,7 @@ class ToolApplication:
         except KubectlCommandError as error:
             return self._error(tool, str(error))
 
-        refusal = service.preflight_connect(request.resource_group, request.cluster)
+        refusal = await service.preflight_connect(request.resource_group, request.cluster)
         if refusal is not None:
             return self._error(tool, refusal["error"], refusal)
         sign_in = await self._ensure_azure_sign_in(tool)
@@ -681,9 +681,10 @@ def _kubernetes_tools() -> list[Tool]:
                 "get-credentials --overwrite-existing', converts the kubeconfig with "
                 "'kubelogin convert-kubeconfig -l azurecli' (Entra ID sign-in through the Azure "
                 "CLI), and optionally sets the default namespace. Starts an Azure CLI sign-in "
-                "if needed. Returns the current kubectl context and namespace. Needs az, "
-                "kubelogin, and kubectl installed; rewrites this cluster's local kubeconfig "
-                "entry."
+                "if needed. Returns the current kubectl context and namespace. Uses the "
+                "user's az, kubelogin, and kubectl when on PATH, otherwise the Azure CLI "
+                "bundled with the server and a kubectl and kubelogin it downloads once with "
+                "'az aks install-cli'; rewrites this cluster's local kubeconfig entry."
             ),
             inputSchema={
                 "type": "object",

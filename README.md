@@ -54,7 +54,7 @@ You need:
 
 The Docker image already contains the server, Python, and Azure CLI.
 
-For the optional [Kubernetes (AKS) tools](#kubernetes-aks), run the server on your desktop (for example with `uvx`) with the Azure CLI, `kubectl`, and `kubelogin` installed. The Docker image does not include `kubectl` or `kubelogin`.
+For the optional [Kubernetes (AKS) tools](#kubernetes-aks), run the server on your desktop with `uvx` (the plugin and the installer do). Nothing else needs installing: the server includes the Azure CLI, and the first AKS use downloads `kubectl` and `kubelogin` with Microsoft's `az aks install-cli`.
 
 ## Claude Code plugin
 
@@ -93,7 +93,7 @@ Replace `cursor` with your client. The entry is named `azure-m365`.
 
 - The installer adds the entry to the existing file and leaves your other settings and MCP servers as they are. It is safe to run again: an up-to-date entry is left alone, and an older one is replaced.
 - `--scope project|user` picks between the current project and your whole user account. `--dir <path>` uses a different project or home folder.
-- By default the client starts the server with `uvx`, so the machine needs `uv` and, for Azure CLI commands, the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
+- By default the client starts the server with `uvx`, so the machine needs only `uv`. The server includes the Azure CLI (an `az` already on your `PATH` is used first); the first start downloads it with the server, about 350 MB, so it can take a minute. Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
 - If the file is not plain JSON (for example, it contains comments), the installer stops without changing it. Add the entry by hand in that case.
 
 Restart your client afterwards, then continue from [Sign in](#3-sign-in).
@@ -371,11 +371,18 @@ uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsof
 
 ### Kubernetes (AKS)
 
-The Kubernetes tools use your own Azure CLI, `kubelogin`, and `kubectl`, with your own kubeconfig (`KUBECONFIG` is respected) and the same access you have in a terminal. They are for desktop use: the Docker image does not include `kubectl` or `kubelogin`. Install them with:
+The Kubernetes tools run `az`, `kubelogin`, and `kubectl` with your own kubeconfig (`KUBECONFIG` is respected) and the same access you have in a terminal. They are for desktop use and need nothing installed beyond `uv`:
+
+- Tools already on your `PATH` are used first.
+- Otherwise `az` is the Azure CLI installed with the server.
+- Otherwise, on first use (`kubernetes_connect`, or `kubernetes_read` / `kubernetes_write` when `kubectl` is missing), the server downloads `kubectl` and `kubelogin` once with Microsoft's `az aks install-cli --install-location <dir>/kubectl --kubelogin-install-location <dir>/kubelogin`, where `<dir>` is `~/.IdentityService/bin` (set `TOOLS_DIR` to change it). Later calls reuse them.
+
+If the download is blocked (offline, proxy), the tool says so and gives the manual install commands, for example:
 
 ```bash
-brew install azure-cli kubectl Azure/kubelogin/kubelogin   # macOS
-az aks install-cli                                         # any OS with the Azure CLI
+brew install kubectl Azure/kubelogin/kubelogin                                    # macOS
+winget install -e --id Kubernetes.kubectl; winget install -e --id Microsoft.Azure.Kubelogin   # Windows
+az aks install-cli                                                                # any OS with the Azure CLI
 ```
 
 `kubernetes_connect` (subscription, resource group, cluster, optional namespace) does what you would do by hand, stopping at the first step that fails:
@@ -508,7 +515,7 @@ For HTTP deployments, set `MCP_API_KEY`, use TLS, and place the server behind ne
 
 ### Run without Docker
 
-Install Python 3.11–3.14 and Azure CLI, then install the package:
+Install Python 3.11–3.14, then install the package (it includes the Azure CLI):
 
 ```bash
 python -m pip install .

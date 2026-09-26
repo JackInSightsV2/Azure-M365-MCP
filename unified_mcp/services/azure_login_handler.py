@@ -7,7 +7,10 @@ import logging
 import os
 import re
 import shlex
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from unified_mcp.cli_tools import ToolLocator
 
 SignInFlow = Literal["browser", "device_code"]
 
@@ -30,6 +33,7 @@ class AzureLoginHandler:
         sign_in_flow: SignInFlow = "browser",
         *,
         browser_wait: float = 3.0,
+        tools: "ToolLocator | None" = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.command_timeout = command_timeout
@@ -37,6 +41,8 @@ class AzureLoginHandler:
         # How long browser sign-in may run before the prompt returns, to catch an
         # immediate failure (for example an unknown argument) instead of hiding it.
         self.browser_wait = browser_wait
+        # Resolves az (PATH, then the bundled Azure CLI) when set.
+        self.tools = tools
         self.current_process: asyncio.subprocess.Process | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
@@ -47,6 +53,9 @@ class AzureLoginHandler:
     async def handle_az_login_command(self, command: str) -> str:
         """Start the configured interactive sign-in and return its prompt promptly."""
         arguments = self._login_arguments(command)
+        env: dict[str, str] | None = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if self.tools is not None:
+            arguments, env = self.tools.prepare(arguments, env)
         async with self._lock:
             await self._stop_current()
             self.last_login_error = None
@@ -56,7 +65,7 @@ class AzureLoginHandler:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     stdin=asyncio.subprocess.PIPE,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    env=env,
                 )
                 self.current_process = process
                 initial = (
