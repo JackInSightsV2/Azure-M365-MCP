@@ -38,6 +38,8 @@ class ExecutionPolicy:
         "show",
         "what-if",
     }
+    # Read-shaped actions that change local state (for example, writing kubeconfig).
+    _LOCAL_SIDE_EFFECT_ACTIONS = {"get-credentials"}
 
     def __init__(
         self,
@@ -79,11 +81,20 @@ class ExecutionPolicy:
             if argument.startswith("-"):
                 break
             command_path.append(argument.lower())
-        if command_path and command_path[-1] in self._READ_ONLY_AZURE_ACTIONS:
+        if command_path and self._is_read_only_action(command_path[-1]):
             return PolicyDecision(True)
         return PolicyDecision(
             False, f"Azure CLI command is not recognized as read-only: {normalized}"
         )
+
+    @classmethod
+    def _is_read_only_action(cls, action: str) -> bool:
+        """Exact read actions, plus variants such as 'list-locations' or 'show-tags'."""
+        if action in cls._READ_ONLY_AZURE_ACTIONS:
+            return True
+        if action in cls._LOCAL_SIDE_EFFECT_ACTIONS:
+            return False
+        return action.startswith(("list-", "show-", "get-"))
 
     def check_graph(self, command: str, method: str) -> PolicyDecision:
         """Authorize a Microsoft Graph request."""

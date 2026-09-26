@@ -13,7 +13,7 @@ Answer from the tools, not from memory. If a tool asks for sign-in (browser wind
 | --- | --- | --- |
 | Read Microsoft 365 / Entra ID | `microsoft365_read` | `command`: Graph v1.0 path (no `https://graph.microsoft.com/v1.0/` prefix). GET only |
 | Change Microsoft 365 / Entra ID | `microsoft365_write` | `command`, `method` (POST/PUT/PATCH/DELETE), `data` (JSON body) |
-| Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`, `query`, `what-if`, `get-instance-view`) or ARM path with `api-version` (GET, or POST to Resource Graph / Cost Management query / What-if) |
+| Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`, `query`, `what-if`, and `list-*` / `show-*` / `get-*` variants such as `list-locations`; not `get-credentials`) or ARM path with `api-version` (GET, or POST to Resource Graph / Cost Management query / What-if) |
 | Change Azure | `azure_write` | `command`: any other `az ...`, or ARM path + `method` + `data` |
 | Which subscription / resource group an Azure resource is in | `azure_find_resource` | `name`: all or part of the resource name |
 
