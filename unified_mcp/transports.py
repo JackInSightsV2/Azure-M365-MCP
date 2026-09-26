@@ -24,6 +24,8 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp
 
 from unified_mcp.application import (
+    AZURE_READ_TOOL,
+    AZURE_WRITE_TOOL,
     MICROSOFT365_READ,
     MICROSOFT365_WRITE,
     SERVER_INSTRUCTIONS,
@@ -33,6 +35,7 @@ from unified_mcp.application import (
     read_resource,
 )
 from unified_mcp.config import Settings
+from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
 from unified_mcp.security import HttpSecurityMiddleware
 
 logger = logging.getLogger(__name__)
@@ -195,10 +198,9 @@ def create_openapi_app(settings: Settings, application: ToolApplication) -> ASGI
 
     @app.post("/execute-azure-cli", response_model=AzureCliResponse)
     async def execute_azure_cli(request: AzureCliRequest) -> AzureCliResponse:
-        execution = await application.execute_tool(
-            "azure_write",
-            request.model_dump(),
-        )
+        read_only = ExecutionPolicy(ExecutionPolicyMode.READ_ONLY).check_azure(request.command)
+        tool = AZURE_READ_TOOL if read_only.allowed else AZURE_WRITE_TOOL
+        execution = await application.execute_tool(tool, request.model_dump())
         payload = execution.payload
         if isinstance(payload, str):
             try:

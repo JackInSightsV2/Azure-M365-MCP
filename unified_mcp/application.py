@@ -87,6 +87,14 @@ ARM_BASE_URL = "https://management.azure.com/"
 _CLI_TO_ARM_PATHS: Dict[tuple[str, ...], str] = {
     ("account", "list"): "subscriptions?api-version=2022-12-01",
 }
+_CLI_SIGN_IN_MARKERS = (
+    "aadsts",
+    "az login",
+    "sign-in was refused",
+    "authentication",
+    "not logged in",
+    "no subscription found",
+)
 _ARM_PATH_HINT = (
     "Retry with an Azure Resource Manager REST path instead, for example "
     "'subscriptions?api-version=2022-12-01' or "
@@ -196,13 +204,19 @@ class ToolApplication:
                     f"{AZURE_READ_TOOL} only runs read-only Azure CLI commands "
                     f"(list, show, get, ...). Use {AZURE_WRITE_TOOL} for this command.",
                 )
+        elif ExecutionPolicy(ExecutionPolicyMode.READ_ONLY).check_azure(request.command).allowed:
+            return self._error(
+                name,
+                f"{AZURE_WRITE_TOOL} only runs commands that change Azure resources. "
+                f"Use {AZURE_READ_TOOL} for this command.",
+            )
 
         cli_error: str | None = None
         if self.azure_service is not None:
             payload = await self.azure_service.execute_azure_cli(request.command)
             if not self._is_cli_error(payload):
                 return ToolExecutionResult(name, payload, payload, False)
-            if "Execution policy denied" in payload or self.arm_service is None:
+            if not self._is_cli_sign_in_failure(payload) or self.arm_service is None:
                 return ToolExecutionResult(name, payload, payload, True)
             cli_error = payload
 
@@ -234,6 +248,12 @@ class ToolApplication:
                 name,
                 f"{AZURE_READ_TOOL} only sends GET requests. "
                 f"Use {AZURE_WRITE_TOOL} for {request.method}.",
+            )
+        if name == AZURE_WRITE_TOOL and request.method == "GET":
+            return self._error(
+                name,
+                f"{AZURE_WRITE_TOOL} only sends POST, PUT, PATCH, or DELETE. "
+                f"Use {AZURE_READ_TOOL} for GET.",
             )
         if self.arm_service is None:
             if not prefer_cli or self.azure_service is None:
@@ -267,6 +287,12 @@ class ToolApplication:
     def _is_cli_command(cls, command: str) -> bool:
         arguments = cls._split(command)
         return bool(arguments) and arguments[0].lower() == "az"
+
+    @staticmethod
+    def _is_cli_sign_in_failure(payload: str) -> bool:
+        """Only sign-in failures fall back to ARM REST; other CLI errors are real answers."""
+        lowered = payload.lower()
+        return any(marker in lowered for marker in _CLI_SIGN_IN_MARKERS)
 
     @staticmethod
     def _is_cli_error(payload: str) -> bool:

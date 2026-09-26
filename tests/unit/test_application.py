@@ -289,3 +289,17 @@ def test_server_instructions_signal_microsoft_connection():
     assert "azure_rest_request" not in SERVER_INSTRUCTIONS
     for term in ("subscriptions", "resource groups", "virtual machines", "conditional access"):
         assert term in lowered, term
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [{"command": "az group list"}, {"command": "subscriptions?api-version=2022-12-01"}],
+)
+async def test_azure_write_rejects_reads(arguments):
+    app = ToolApplication(FakeAzureCliService(), FakeGraphService(), FakeAzureRestService())
+
+    result = await app.execute_tool("azure_write", arguments)
+
+    assert result.is_error is True
+    assert "azure_read" in result.text

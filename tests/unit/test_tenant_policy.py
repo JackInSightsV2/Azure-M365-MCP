@@ -104,7 +104,7 @@ async def test_graph_tool_returns_plain_message_on_consent_refusal():
     graph = GraphService(Settings(), token_broker=_failing_broker(CONSENT_ERROR))
     app = ToolApplication(FakeAzureCliService(), graph, FakeAzureRestService())
 
-    result = await app.execute_tool("graph_command", {"command": "me"})
+    result = await app.execute_tool("microsoft365_read", {"command": "me"})
 
     assert result.is_error is True
     assert "Tenant policy (AADSTS65001)" in result.text
@@ -124,7 +124,7 @@ async def test_graph_tool_policy_refusal_replaces_stale_device_code():
     }
     app = ToolApplication(FakeAzureCliService(), graph, FakeAzureRestService())
 
-    result = await app.execute_tool("graph_command", {"command": "me"})
+    result = await app.execute_tool("microsoft365_read", {"command": "me"})
 
     assert "AADSTS53003" in result.text
     assert "OLDCODE" not in result.text
@@ -136,7 +136,7 @@ async def test_graph_tool_other_auth_errors_unchanged():
     graph = GraphService(Settings(), token_broker=_failing_broker("AADSTS50126: bad password"))
     app = ToolApplication(FakeAzureCliService(), graph, FakeAzureRestService())
 
-    result = await app.execute_tool("graph_command", {"command": "me"})
+    result = await app.execute_tool("microsoft365_read", {"command": "me"})
 
     assert result.is_error is True
     assert "Authentication failed: AADSTS50126: bad password" in result.text
@@ -148,7 +148,7 @@ async def test_azure_rest_tool_returns_plain_message_on_conditional_access():
     arm = AzureRestService(Settings(), token_broker=_failing_broker(CONDITIONAL_ACCESS_ERROR))
     app = ToolApplication(FakeAzureCliService(), FakeGraphService(), arm)
 
-    result = await app.execute_tool("azure_rest_request", {"command": "subscriptions"})
+    result = await app.execute_tool("azure_read", {"command": "subscriptions"})
 
     assert result.is_error is True
     assert "Tenant policy (AADSTS53003)" in result.text
@@ -163,7 +163,7 @@ async def test_azure_cli_tool_returns_plain_message_on_policy_refusal():
     cli = AzureCliService(Settings(), runner=runner)
     app = ToolApplication(cli, FakeGraphService(), FakeAzureRestService())
 
-    result = await app.execute_tool("execute_azure_cli_command", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az account show"})
 
     assert result.is_error is True
     assert result.text.startswith("Error: Sign-in was refused")
@@ -181,7 +181,7 @@ async def test_azure_cli_tool_explains_failed_device_login():
     cli.login_handler.last_login_error = f"{CONSENT_ERROR}"
     app = ToolApplication(cli, FakeGraphService(), FakeAzureRestService())
 
-    result = await app.execute_tool("execute_azure_cli_command", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az account show"})
 
     assert result.is_error is True
     assert "AADSTS65001" in result.text
@@ -201,7 +201,7 @@ async def test_azure_cli_service_principal_refusal_names_configured_app():
         AzureCliService(settings, runner=runner), FakeGraphService(), FakeAzureRestService()
     )
 
-    result = await app.execute_tool("execute_azure_cli_command", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az account show"})
 
     assert result.is_error is True
     assert "client ID sp-client" in result.text
@@ -215,6 +215,6 @@ async def test_azure_cli_tool_other_errors_unchanged():
     cli = AzureCliService(Settings(), runner=runner)
     app = ToolApplication(cli, FakeGraphService(), FakeAzureRestService())
 
-    result = await app.execute_tool("execute_azure_cli_command", {"command": "az group show"})
+    result = await app.execute_tool("azure_read", {"command": "az group show"})
 
     assert result.text == "Command: az group show\nError: ResourceGroupNotFound"
