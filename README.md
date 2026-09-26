@@ -169,9 +169,9 @@ You do not run that command separately. The AI client runs it when required.
 
 ### 2. Restart your AI client
 
-Restart the client after saving its configuration. It should discover these two tools:
+Restart the client after saving its configuration. It should discover these tools:
 
-- `execute_azure_cli_command` for Azure;
+- `azure_read` to look up Azure resources and `azure_write` to change them;
 - `graph_command` for Microsoft 365 and Microsoft Graph.
 
 Your client may ask you to approve a tool before it runs. That approval prompt is controlled by the client, not this server.
@@ -180,7 +180,7 @@ Your client may ask you to approve a tool before it runs. That approval prompt i
 
 Ask the assistant:
 
-> Sign me in to Azure using the Azure CLI tool.
+> Sign me in to Azure.
 
 The assistant will return a web address and device code. Open the address, enter the code, and complete sign-in. Then retry your original request.
 
@@ -294,7 +294,7 @@ The Docker image encrypts the cached tokens at rest using a keyring (Secret Serv
 
 ### When Conditional Access blocks the Azure CLI
 
-Some tenants block the Azure CLI's application id with a Conditional Access policy, so `az login` fails even though your account is valid. In that case use the `azure_rest_request` tool, which signs in with a different, configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default) that the policy may allow. See [Tools](#tools).
+Some tenants block the Azure CLI's application id with a Conditional Access policy, so `az login` fails even though your account is valid. The Azure tools then fall back automatically to the Azure Resource Manager REST API, which signs in with a different, configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default) that the policy may allow. See [Tools](#tools).
 
 ### Unattended or shared server
 
@@ -348,25 +348,24 @@ docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
 
 ### Tools
 
-`execute_azure_cli_command` accepts an Azure CLI command beginning with `az`, for example:
+`azure_read` (the Azure Read tool) and `azure_write` (the Azure Write tool) each accept either an Azure CLI command beginning with `az` or an Azure Resource Manager REST path with the `api-version` query parameter. `azure_read` runs only read-only CLI actions (`list`, `show`, `get`, ...) and REST `GET`; anything else is rejected with a pointer to `azure_write`. The client can therefore auto-allow `azure_read` and ask before each `azure_write` call.
 
 ```text
 az account show
 az group list
 az vm list --resource-group example-rg
-```
 
-`azure_rest_request` calls the Azure Resource Manager REST API (`https://management.azure.com`) directly, without the Azure CLI binary. Use it when the Azure CLI is unavailable or its app id is blocked by Conditional Access. Include the `api-version` query parameter:
-
-```text
 command: subscriptions?api-version=2022-12-01
 method: GET
 
-command: subscriptions/{id}/resourceGroups?api-version=2021-04-01
-method: GET
+command: subscriptions/{id}/resourceGroups/example-rg?api-version=2021-04-01
+method: PUT
+data: {"location": "eastus"}
 ```
 
-Interactive sign-in for this tool uses `AZURE_ARM_CLIENT_ID` (the Azure PowerShell public client by default), which a locked-down tenant may permit even when the Azure CLI is blocked. Disable the tool with `ENABLE_AZURE_REST=false`.
+The server picks the transport. It uses the Azure CLI when it is available and falls back to the Azure Resource Manager REST API (`https://management.azure.com`) when the CLI is missing or fails, including when its sign-in is blocked by Conditional Access. A CLI command with no direct REST equivalent cannot fall back; the error then suggests an ARM path to retry with.
+
+Interactive sign-in for the REST fallback uses `AZURE_ARM_CLIENT_ID` (the Azure PowerShell public client by default), which a locked-down tenant may permit even when the Azure CLI is blocked. Disable the fallback with `ENABLE_AZURE_REST=false`.
 
 `graph_command` accepts a Microsoft Graph v1.0 path, an HTTP method, and an optional JSON body:
 

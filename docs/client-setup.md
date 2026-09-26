@@ -163,7 +163,7 @@ Use `allowlist` only for a tightly controlled role or workflow. See [Execution p
 
 Start with either tool:
 
-- `execute_azure_cli_command` with `az login`
+- `azure_read` with `az login`
 - `graph_command` with `GET me`
 
 The tool returns a device code when sign-in is required. Complete sign-in and retry the request. For unattended deployments, pass managed-identity or service-principal settings from [env.example](../env.example) instead.

@@ -22,7 +22,8 @@ def test_mcp_initialization_includes_operational_instructions():
     options = server.create_initialization_options()
 
     assert options.instructions == SERVER_INSTRUCTIONS
-    assert "execute_azure_cli_command" in options.instructions
+    assert "azure_read" in options.instructions
+    assert "azure_write" in options.instructions
     assert "graph_command" in options.instructions
 
 
