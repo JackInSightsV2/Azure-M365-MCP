@@ -181,3 +181,22 @@ AGENTS.md
 CONTEXT.md
 docs/agents/
 docs/adr/
+
+# Claude Code working files (agent worktrees, personal settings, scratch)
+.claude/worktrees/
+.claude/settings.local.json
+.scratch/
+
+# Credentials and sign-in state that must never be committed
+*.pem
+*.pfx
+*.p12
+*.key
+kubeconfig
+.kube/
+.azure/
+.IdentityService/
+*auth-record.json
+unified-microsoft-mcp.cache
+*resource-inventory.json
+*resource-inventory.consent
