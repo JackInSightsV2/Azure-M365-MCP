@@ -423,6 +423,8 @@ class ToolApplication:
         text = f"Error ({label})\n\n{result.get('error', 'Unknown error')}"
         if result.get("auth_required") and result.get("instructions"):
             text += f"\n\nInstructions:\n{result['instructions']}"
+        if result.get("suggestion"):
+            text += f"\n\nSuggestion:\n{result['suggestion']}"
         if result.get("error_details"):
             details = result["error_details"]
             if not isinstance(details, str):

@@ -366,3 +366,22 @@ async def test_azure_read_falls_back_to_rest_when_cli_not_installed():
 
     assert result.is_error is False
     assert "Fake Subscription" in result.text
+
+
+@pytest.mark.asyncio
+async def test_graph_forbidden_explains_missing_permission():
+    class Forbidden(FakeGraphService):
+        async def execute_command(self, command, method="GET", data=None):
+            return {
+                "success": False,
+                "error": "HTTP 403: Access is denied.",
+                "status_code": 403,
+                "suggestion": "set GRAPH_SCOPES",
+            }
+
+    app = ToolApplication(FakeAzureCliService(), Forbidden(), FakeAzureRestService())
+
+    result = await app.execute_tool("microsoft365_read", {"command": "me/messages"})
+
+    assert result.is_error is True
+    assert "Suggestion:" in result.text and "GRAPH_SCOPES" in result.text

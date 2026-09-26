@@ -244,6 +244,15 @@ class GraphService:
                 "The /me endpoint requires delegated authentication. Use /users/{userId}, "
                 "list /users, or configure delegated authentication."
             )
+        elif response.status_code == 403 and not self.token_broker.is_application_identity:
+            result["suggestion"] = (
+                "The signed-in app has not been granted the Microsoft Graph permission this "
+                "request needs in your Tenant, or your account lacks the role. The server "
+                "only uses permissions the Tenant has already granted. To request more, set "
+                "GRAPH_SCOPES to the needed scopes (for example "
+                "https://graph.microsoft.com/Mail.Read) and sign in again; a consent prompt "
+                "appears, which Tenant policy may require an admin to approve."
+            )
         return result
 
     def _get_http_client(self) -> httpx.AsyncClient:
