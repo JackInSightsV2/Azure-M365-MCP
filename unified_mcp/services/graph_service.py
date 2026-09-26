@@ -13,6 +13,7 @@ import httpx
 from unified_mcp.auth import ServicePrincipalProfile, TokenBroker
 from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
+from unified_mcp.tenant_policy import detect_tenant_policy_refusal, tenant_policy_response
 
 
 class GraphService:
@@ -123,9 +124,14 @@ class GraphService:
             return self._device_auth_response()
         except Exception as error:
             self.logger.error("Microsoft Graph authentication failed: %s", error)
+            message = str(error)
+            refusal = detect_tenant_policy_refusal(message, self.auth_profile.client_id)
+            if refusal is not None:
+                # The pending device code is spent; do not show it again.
+                self.device_code_info = None
+                return tenant_policy_response(refusal, message)
             if self.device_code_info:
                 return self._device_auth_response()
-            message = str(error)
             if "AADSTS7000215" in message or "Invalid client secret" in message:
                 return {
                     "success": False,
