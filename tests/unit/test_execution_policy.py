@@ -66,3 +66,28 @@ def test_settings_parse_execution_policy_and_allowlists():
     assert settings.execution_policy is ExecutionPolicyMode.ALLOWLIST
     assert settings.azure_command_allowlist == ["az account show", "az group list"]
     assert settings.graph_request_allowlist == ["GET /users", "GET /groups"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "az account list-locations",
+        "az vm list-sizes -l uksouth",
+        "az resource show-tags --ids x",
+        "az vm get-instance-view -g rg -n vm",
+    ],
+)
+def test_read_only_policy_allows_read_action_variants(command):
+    policy = ExecutionPolicy(ExecutionPolicyMode.READ_ONLY)
+
+    assert policy.check_azure(command).allowed
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["az aks get-credentials -g rg -n aks", "az vm start -g rg -n vm", "az group delete -n rg"],
+)
+def test_read_only_policy_rejects_writes_and_local_side_effects(command):
+    policy = ExecutionPolicy(ExecutionPolicyMode.READ_ONLY)
+
+    assert not policy.check_azure(command).allowed
