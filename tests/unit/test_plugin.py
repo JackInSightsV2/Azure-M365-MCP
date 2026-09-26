@@ -8,6 +8,8 @@ from unified_mcp.installer import SERVER_NAME, launch_command
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_MANIFEST = REPOSITORY_ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE_MANIFEST = REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json"
+VERIFIER_AGENT = REPOSITORY_ROOT / "agents" / "tenant-verifier.md"
+READ_TOOLS = {"microsoft365_read", "azure_read", "azure_find_resource"}
 COMPONENT_KEYS = ("skills", "commands", "agents", "hooks", "outputStyles", "lspServers")
 
 
@@ -80,3 +82,21 @@ def test_skill_frontmatter_has_name_and_description(skill):
 
     assert fields.get("name") == skill.parent.name
     assert fields.get("description")
+
+
+def test_verifier_agent_has_name_and_description():
+    fields = _frontmatter(VERIFIER_AGENT)
+
+    assert fields.get("name") == "tenant-verifier"
+    assert fields.get("description")
+
+
+def test_verifier_agent_has_read_tools_only():
+    plugin = _load(PLUGIN_MANIFEST)
+    tools = [tool.strip() for tool in _frontmatter(VERIFIER_AGENT)["tools"].split(",")]
+
+    plugin_prefix = f"mcp__plugin_{plugin['name']}_{SERVER_NAME}__"
+    assert {plugin_prefix + name for name in READ_TOOLS} <= set(tools)
+    for tool in tools:
+        assert tool.startswith("mcp__"), f"{tool} is not an MCP tool"
+        assert tool.rpartition("__")[2] in READ_TOOLS, f"{tool} is not a Read tool"

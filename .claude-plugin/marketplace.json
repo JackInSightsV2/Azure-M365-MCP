@@ -8,7 +8,7 @@
     {
       "name": "azure-m365",
       "source": "./",
-      "description": "Microsoft 365, Entra ID, and Azure Read and Write tools, with setup and microsoft-cloud skills"
+      "description": "Microsoft 365, Entra ID, and Azure Read and Write tools, with setup and microsoft-cloud skills and the tenant-verifier agent"
     }
   ]
 }

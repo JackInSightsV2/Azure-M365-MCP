@@ -104,4 +104,10 @@ Query tips: always `$select` the fields you need; `$top` (max 999 for users/grou
 
 ## Verifier
 
-> Placeholder: arrives in #27 (`tenant-verifier` agent for What-if before, and confirmation after, significant writes).
+The `tenant-verifier` agent is the Verifier. It has Read tools only and never makes changes.
+
+- **Before** any `azure_write` call, and any `microsoft365_write` call that changes users, groups, or licences (create, update, delete, membership, `assignLicense`), invoke `tenant-verifier` with the exact planned call: tool, command or path, method, and body. It runs a What-if and returns target, current state, predicted change, risks, and a GO / CHECK verdict. Show the user the result; on CHECK, resolve what it flags with the user before calling the Write tool.
+- **After** that write, invoke `tenant-verifier` again with the same call to re-read the target and confirm each intended field landed. Report any mismatch to the user.
+- **Skip** it for mail, calendar events, Teams messages, files, and similar low-risk writes.
+- Invoke it whenever the user asks to check a planned or completed change.
+- If the Verifier reports a Tenant policy refusal, relay it; don't look for a way around it.

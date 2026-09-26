@@ -62,10 +62,11 @@ In Claude Code, add this repository as a plugin marketplace and install the plug
 /plugin install azure-m365@azure-m365-mcp
 ```
 
-The plugin provides the `azure-m365` server (started with `uvx`, so the machine needs [uv](https://docs.astral.sh/uv/)) and two skills:
+The plugin provides the `azure-m365` server (started with `uvx`, so the machine needs [uv](https://docs.astral.sh/uv/)) two skills, and an agent:
 
 - `/azure-m365:setup` completes an Interactive sign-in and checks the connection with a `me` read and `az account show`.
 - `microsoft-cloud` gives the assistant common Microsoft Graph and Azure paths so calls are right first time. It loads automatically when relevant.
+- `tenant-verifier` (the Verifier) has Read tools only. Before a write to Azure or to users, groups, or licences it runs a What-if (native ARM What-if for Azure deployments, otherwise a diff of the current state against the planned change) and gives a GO / CHECK verdict; afterwards it re-reads the target and confirms the change landed. The `microsoft-cloud` skill calls it around those writes, not around mail or other low-risk writes. Ask for it any time with `@agent-azure-m365:tenant-verifier`.
 
 Other clients do not support plugins; use the installer below.
 
