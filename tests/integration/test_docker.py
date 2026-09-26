@@ -169,6 +169,7 @@ async def assert_mcp_contract(session):
     assert {tool.name for tool in tools.tools} == {
         "azure_read",
         "azure_write",
+        "azure_find_resource",
         "microsoft365_read",
         "microsoft365_write",
     }
@@ -224,6 +225,7 @@ async def test_stdio_mcp_tool_call(docker_compose_env):
             assert {tool.name for tool in tools.tools} == {
                 "azure_read",
                 "azure_write",
+                "azure_find_resource",
                 "microsoft365_read",
                 "microsoft365_write",
             }

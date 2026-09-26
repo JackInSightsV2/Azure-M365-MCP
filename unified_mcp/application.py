@@ -13,6 +13,13 @@ from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, ValidationError
 
 from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
+from unified_mcp.resource_inventory import (
+    MAX_MATCHES,
+    RESOURCE_GRAPH_PATH,
+    ResourceInventory,
+    ResourceInventoryError,
+    consent_message,
+)
 
 SERVER_INSTRUCTIONS = (
     "This server connects to the user's Microsoft cloud: Microsoft 365 (also called M365 "
@@ -33,7 +40,9 @@ SERVER_INSTRUCTIONS = (
     "the Azure CLI and falls back to ARM REST when the CLI is unavailable or blocked by "
     "Conditional Access.\n"
     "- azure_write: create, change, or delete the same Azure resources, with the same "
-    "inputs and fallback.\n\n"
+    "inputs and fallback.\n"
+    "- azure_find_resource: find which subscription and resource group an Azure resource "
+    "is in by name, in one call. Try it before searching subscriptions one by one.\n\n"
     "Prefer read operations, inspect the help resources before unfamiliar actions, and "
     "never place credentials in tool arguments. Authentication prompts may require the "
     "user to complete a device sign-in and retry."
@@ -80,6 +89,7 @@ class RestExecutor(Protocol):
 
 AZURE_READ_TOOL = "azure_read"
 AZURE_WRITE_TOOL = "azure_write"
+AZURE_FIND_RESOURCE_TOOL = "azure_find_resource"
 ARM_BASE_URL = "https://management.azure.com/"
 
 # Azure CLI commands with a direct ARM REST equivalent, keyed by command path (the
@@ -127,6 +137,13 @@ class AzureToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class FindResourceInput(BaseModel):
+    """Typed azure_find_resource input: all or part of a resource name."""
+
+    name: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+
 @dataclass(frozen=True)
 class ToolExecutionResult:
     """One canonical result consumed by MCP and OpenAPI transports."""
@@ -145,10 +162,12 @@ class ToolApplication:
         azure_service: AzureExecutor | None,
         graph_service: GraphExecutor | None,
         arm_service: RestExecutor | None = None,
+        resource_inventory: ResourceInventory | None = None,
     ) -> None:
         self.azure_service = azure_service
         self.graph_service = graph_service
         self.arm_service = arm_service
+        self.resource_inventory = resource_inventory
         self.logger = logging.getLogger(__name__)
 
     async def execute_tool(
@@ -164,6 +183,13 @@ class ToolApplication:
             if self._is_cli_command(azure_request.command):
                 return await self._execute_azure_cli(name, azure_request)
             return await self._execute_azure_rest(name, azure_request)
+
+        if name == AZURE_FIND_RESOURCE_TOOL:
+            try:
+                find_request = FindResourceInput.model_validate(arguments)
+            except ValidationError as error:
+                return self._error(name, self._validation_message(error))
+            return await self._find_resource(find_request.name)
 
         if name in (MICROSOFT365_READ, MICROSOFT365_WRITE):
             if self.graph_service is None:
@@ -196,6 +222,48 @@ class ToolApplication:
             )
 
         return self._error(name, f"Unknown tool: {name}")
+
+    async def _find_resource(self, name: str) -> ToolExecutionResult:
+        """Look a resource up by name in the opt-in Resource inventory."""
+        tool = AZURE_FIND_RESOURCE_TOOL
+        inventory = self.resource_inventory
+        if inventory is None:
+            return self._error(tool, "The Resource inventory is not available in this server")
+        if not inventory.has_consent():
+            # Consent may have been withdrawn since the last build: leave no map behind.
+            inventory.delete()
+            message = consent_message()
+            return ToolExecutionResult(
+                tool, {"success": False, "consent_required": True, "error": message}, message, True
+            )
+        if self.arm_service is None:
+            return self._error(
+                tool, "The Resource inventory needs Azure Resource Manager REST (ENABLE_AZURE_REST)"
+            )
+        try:
+            found = await inventory.find(name, self.arm_service)
+        except ResourceInventoryError as error:
+            request = GraphToolInput(command=RESOURCE_GRAPH_PATH, method="POST")
+            return ToolExecutionResult(
+                tool, error.payload, self._format_graph(request, error.payload), True
+            )
+
+        payload = {"success": True, "matches": found.matches, "total": found.total}
+        if not found.matches:
+            text = (
+                f"No Azure resource with a name matching '{name}' in the Resource inventory, "
+                "which was refreshed just now. Check the spelling, or the resource may be in "
+                "a subscription or Tenant you cannot see."
+            )
+            return ToolExecutionResult(tool, payload, text, False)
+        shown = f"showing the first {MAX_MATCHES} of {found.total}; use a more specific name"
+        header = (
+            f"Found {found.total} Azure resource(s) matching '{name}'"
+            + (f" ({shown})" if found.total > len(found.matches) else "")
+            + ", exact name matches first:"
+        )
+        text = f"{header}\n\n```json\n{json.dumps(found.matches, indent=2)}\n```"
+        return ToolExecutionResult(tool, payload, text, False)
 
     async def _execute_azure_cli(self, name: str, request: AzureToolInput) -> ToolExecutionResult:
         """Run an Azure CLI command, falling back to ARM REST when the CLI is absent or fails."""
@@ -449,6 +517,35 @@ def create_tools() -> list[Tool]:
                 title="Change Azure resources",
                 readOnlyHint=False,
                 destructiveHint=True,
+            ),
+        ),
+        Tool(
+            name=AZURE_FIND_RESOURCE_TOOL,
+            description=(
+                "Find an Azure resource by name: which subscription and resource group is it "
+                "in, what type is it, where is it located, and what is its resource ID. One "
+                "call searches every subscription the user can see, so try this before "
+                "listing subscriptions or resource groups one by one. Case-insensitive; exact "
+                "name matches first, then names containing the text; at most 20 results. "
+                "Uses the opt-in Resource inventory; if it is off, the result explains how to "
+                "turn it on. Examples: 'prod-sql-01', 'webapp'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The resource name, or part of it",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            annotations=ToolAnnotations(
+                title="Find an Azure resource by name",
+                readOnlyHint=True,
+                destructiveHint=False,
             ),
         ),
         Tool(

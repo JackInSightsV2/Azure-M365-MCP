@@ -26,6 +26,7 @@ def test_mcp_initialization_includes_operational_instructions():
     assert "azure_write" in options.instructions
     assert "microsoft365_read" in options.instructions
     assert "microsoft365_write" in options.instructions
+    assert "azure_find_resource" in options.instructions
 
 
 @pytest.mark.asyncio
