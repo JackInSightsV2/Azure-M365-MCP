@@ -213,6 +213,7 @@ You do not run that command separately. The AI client runs it when required.
 Restart the client after saving its configuration. It should discover these tools:
 
 - `azure_read` to look up Azure resources and `azure_write` to change them;
+- `azure_find_resource` to find which subscription and resource group an Azure resource is in (needs the opt-in [Resource inventory](#resource-inventory-opt-in));
 - `microsoft365_read` to read Microsoft 365 and Entra ID through Microsoft Graph (read-only);
 - `microsoft365_write` to change Microsoft 365 and Entra ID through Microsoft Graph (your client should ask before each call).
 
@@ -337,6 +338,18 @@ The Docker image encrypts the cached tokens at rest using a keyring (Secret Serv
 ### When Conditional Access blocks the Azure CLI
 
 Some tenants block the Azure CLI's application id with a Conditional Access policy, so `az login` fails even though your account is valid. The Azure tools then fall back automatically to the Azure Resource Manager REST API, which signs in with a different, configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default) that the policy may allow. See [Tools](#tools).
+
+### Resource inventory (opt-in)
+
+`azure_find_resource` finds an Azure resource by name (its subscription, resource group, type, location, and ID) in one call. It uses a Resource inventory: a local file listing every Azure resource you can see, built from one Azure Resource Graph query and rebuilt when older than 24 hours or when a lookup finds nothing. It stores only name, type, subscription, resource group, location, and ID (no tags or properties), sits beside the token cache (`TOKEN_CACHE_DIR`, default `~/.IdentityService`), and is readable only by your user account. Microsoft 365 objects are never included.
+
+That file is a map of your whole Azure estate, so it is off by default. The `setup` skill explains the risk and turns it on only if you say yes. To do it yourself:
+
+```bash
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on   # or: off, status
+```
+
+`off` withdraws consent and deletes the file. For Docker, run the same subcommand in the image with the identity volume mounted (`docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`). Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
 
 ### Unattended or shared server
 

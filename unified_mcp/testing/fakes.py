@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class FakeAzureCliService:
@@ -76,8 +76,44 @@ class FakeAzureCliService:
         """Match the production service lifecycle contract."""
 
 
+DEFAULT_FAKE_RESOURCES: List[Dict[str, Any]] = [
+    {
+        "name": "fake-vm",
+        "type": "microsoft.compute/virtualmachines",
+        "subscriptionId": "fake-subscription-id",
+        "resourceGroup": "rg1",
+        "location": "eastus",
+        "id": "/subscriptions/fake-subscription-id/resourceGroups/rg1/providers/"
+        "Microsoft.Compute/virtualMachines/fake-vm",
+    },
+    {
+        "name": "fakestorage",
+        "type": "microsoft.storage/storageaccounts",
+        "subscriptionId": "fake-subscription-id",
+        "resourceGroup": "rg2",
+        "location": "westus",
+        "id": "/subscriptions/fake-subscription-id/resourceGroups/rg2/providers/"
+        "Microsoft.Storage/storageAccounts/fakestorage",
+    },
+]
+
+
 class FakeAzureRestService:
-    """Azure Resource Manager REST adapter with deterministic JSON responses."""
+    """Azure Resource Manager REST adapter with deterministic JSON responses.
+
+    Answers Azure Resource Graph queries from ``resources``, ``page_size`` rows at a time
+    with a ``$skipToken`` for the next page, and counts them in ``resource_graph_queries``.
+    Assign ``resources`` to change the estate between calls.
+    """
+
+    def __init__(
+        self,
+        resources: Optional[List[Dict[str, Any]]] = None,
+        page_size: int = 1000,
+    ) -> None:
+        self.resources = list(DEFAULT_FAKE_RESOURCES if resources is None else resources)
+        self.page_size = page_size
+        self.resource_graph_queries = 0
 
     async def execute_command(
         self,
@@ -86,6 +122,11 @@ class FakeAzureRestService:
         data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         path = command.split("?", 1)[0].strip("/")
+        if (
+            path.lower() == "providers/microsoft.resourcegraph/resources"
+            and method.upper() == "POST"
+        ):
+            return self._resource_graph(data or {})
         if path == "subscriptions":
             payload: Any = {
                 "value": [
@@ -98,6 +139,24 @@ class FakeAzureRestService:
             }
         else:
             payload = {"message": f"Mock ARM response for {method.upper()} {command}"}
+        return {"success": True, "data": payload, "status_code": 200}
+
+    def _resource_graph(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Page through ``resources`` the way Azure Resource Graph does."""
+        options = body.get("options") or {}
+        start = int(options.get("$skipToken") or 0)
+        end = start + min(self.page_size, int(options.get("$top") or self.page_size))
+        if start == 0:
+            self.resource_graph_queries += 1
+        page = self.resources[start:end]
+        payload: Dict[str, Any] = {
+            "totalRecords": len(self.resources),
+            "count": len(page),
+            "resultTruncated": "false",
+            "data": page,
+        }
+        if end < len(self.resources):
+            payload["$skipToken"] = str(end)
         return {"success": True, "data": payload, "status_code": 200}
 
     async def close(self) -> None:

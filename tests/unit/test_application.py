@@ -9,6 +9,7 @@ def test_create_tools_exposes_azure_read_and_write():
     assert names == {
         "azure_read",
         "azure_write",
+        "azure_find_resource",
         "microsoft365_read",
         "microsoft365_write",
     }

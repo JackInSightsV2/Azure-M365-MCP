@@ -40,4 +40,21 @@ Tell the user setup is complete and which surfaces are connected. For writing co
 
 ## Resource inventory (opt-in)
 
-> Placeholder: arrives in #26. Do not offer or create a Resource inventory yet.
+After a successful Azure check, offer the Resource inventory. It makes `azure_find_resource` work: one lookup that says which subscription and resource group a named Azure resource is in.
+
+State the risk plainly before asking, covering all of this:
+
+- It is a file on this machine listing the name, type, subscription, resource group, location, and ID of every Azure resource the user's account can see. No tags, no properties, nothing from Microsoft 365.
+- It is a map of their whole Azure estate. Only their user account can read it, but anything running as them (malware, backups, other AI tools) could.
+- It refreshes itself every 24 hours. They can withdraw at any time, which deletes it.
+
+Then ask: "Do you want me to turn on the Resource inventory?" Turn it on only after an explicit yes. Anything else (no, unsure, no answer, a question) means leave it off and finish.
+
+**Turn on** (explicit yes only), using the same launcher as the server:
+
+- uvx (plugin, or the installer default): `uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on`
+- Docker: `docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`
+
+If the server's config sets `TOKEN_CACHE_DIR`, run the command with the same value in its environment. No restart is needed. Confirm by calling `azure_find_resource` with the name of any Azure resource the user knows (resources only; resource groups and subscriptions are not in it).
+
+**Withdraw**: run the same command with `off` instead of `on`. It removes consent and deletes the Resource inventory file. `status` shows whether it is on. If the client's MCP config sets `RESOURCE_INVENTORY=true`, remove that as well.

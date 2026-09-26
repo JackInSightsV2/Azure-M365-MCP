@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     graph_token_cache: bool = Field(default=True, alias="GRAPH_TOKEN_CACHE")
     token_cache_dir: Optional[str] = Field(default=None, alias="TOKEN_CACHE_DIR")
 
+    # Resource inventory: an opt-in local file listing every Azure resource the user can
+    # see, so azure_find_resource can locate one by name. Consent is either this setting
+    # or the consent file that ``unified-microsoft-mcp resource-inventory on`` writes
+    # beside the token cache.
+    resource_inventory: bool = Field(default=False, alias="RESOURCE_INVENTORY")
+
     # Azure Resource Manager REST access. Authenticates with a configurable public
     # client so Conditional Access policies that block the Azure CLI's own app id can
     # be satisfied by an allowed identity (for example Azure PowerShell). The default
@@ -343,12 +349,15 @@ class Settings(BaseSettings):
 
         return secret.get_secret_value() if secret is not None else None
 
+    def token_cache_directory(self) -> str:
+        """Return the per-user directory that holds the token cache and sign-in records."""
+        return self.token_cache_dir or os.path.expanduser(os.path.join("~", ".IdentityService"))
+
     def _auth_record_path(self, label: str) -> str:
         """Return the file that persists a device-code sign-in for one client."""
-        directory = self.token_cache_dir or os.path.expanduser(
-            os.path.join("~", ".IdentityService")
+        return os.path.join(
+            self.token_cache_directory(), f"unified-microsoft-mcp.{label}.auth-record.json"
         )
-        return os.path.join(directory, f"unified-microsoft-mcp.{label}.auth-record.json")
 
     def get_graph_auth_profile(self) -> GraphAuthProfile:
         """Resolve Graph settings into a typed authentication profile."""

@@ -15,11 +15,13 @@ Answer from the tools, not from memory. If a tool returns a device code, run the
 | Change Microsoft 365 / Entra ID | `microsoft365_write` | `command`, `method` (POST/PUT/PATCH/DELETE), `data` (JSON body) |
 | Read Azure | `azure_read` | `command`: `az ...` read action (`list`, `show`, `get`, `exists`, `check`, `find`, `query`, `what-if`, `get-instance-view`) or ARM path with `api-version` (GET, or POST to Resource Graph / Cost Management query / What-if) |
 | Change Azure | `azure_write` | `command`: any other `az ...`, or ARM path + `method` + `data` |
+| Which subscription / resource group an Azure resource is in | `azure_find_resource` | `name`: all or part of the resource name |
 
 - Read tools reject writes and Write tools reject reads; the error names the right tool.
 - The server picks Azure CLI or ARM REST; ARM paths have no `https://management.azure.com/` prefix. A CLI command with no REST equivalent can't fall back when the CLI is blocked; retry with an ARM path.
 - Prefer Graph (`microsoft365_*`) over `az ad ...` for Entra ID objects.
 - Write tools run after the client asks the user. Say what will change before calling one.
+- Given an Azure resource name but not its subscription or resource group, try `azure_find_resource` before searching subscriptions. If it says the Resource inventory is off, use the Resource Graph query below instead; mention the `setup` skill's Resource inventory step only if the user wants faster lookups.
 
 ## Microsoft Graph v1.0 (`microsoft365_read` unless noted)
 
@@ -92,7 +94,7 @@ Query tips: always `$select` the fields you need; `$top` (max 999 for users/grou
 
 **Query POSTs go through `azure_read`** (Resource Graph, Cost Management query, and deployment What-if only read, so the Read tool accepts them):
 - Cost totals: POST `subscriptions/{sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01` with `{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceGroupName"}]}}`
-- Find a resource by name across subscriptions: POST `providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with `{"query":"Resources | where name =~ 'myvm' | project name, type, subscriptionId, resourceGroup, location, id"}`
+- Find a resource by name across subscriptions (when `azure_find_resource` is off): POST `providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with `{"query":"Resources | where name =~ 'myvm' | project name, type, subscriptionId, resourceGroup, location, id"}`
 
 **Common writes (`azure_write`)**
 - `az group create -n {rg} -l uksouth` · PUT `subscriptions/{sub}/resourcegroups/{rg}?api-version=2021-04-01` `{"location":"uksouth"}`
