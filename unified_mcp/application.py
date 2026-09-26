@@ -522,46 +522,30 @@ def create_resources() -> list[Resource]:
 
 
 def read_resource(uri: AnyUrl) -> str:
-    """Read a canonical help resource."""
+    """Read a short help resource; the microsoft-cloud skill is the full reference."""
     if str(uri) == "azure://help":
         return """# Azure tools
 
-Use `azure_read` to look things up and `azure_write` to make changes. Each accepts an
-Azure CLI command beginning with `az` or an Azure Resource Manager REST path with an
-`api-version` query parameter (plus `method` and `data` for REST writes).
+`azure_read` (read-only `az` actions such as list/show/get, or ARM REST GET) and
+`azure_write` (every other `az` command, or ARM REST with `method` and `data`).
+ARM paths need an `api-version`, for example `subscriptions?api-version=2022-12-01`.
+The server uses the Azure CLI and falls back to ARM REST when the CLI is missing or its
+sign-in fails. Examples: `az account show`, `az group list`, `az vm list -d`.
 
-The server runs the Azure CLI when it is available and falls back to Azure Resource
-Manager REST when the CLI is missing or its sign-in fails (for example when Conditional
-Access blocks it). ARM REST signs in with a configurable public client
-(`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default). CLI commands without a direct REST
-equivalent cannot fall back; pass an ARM path such as
-`subscriptions?api-version=2022-12-01` instead.
-
-- Interactive: call `az login` and complete the device flow.
-- Automation: configure service-principal credentials or managed identity.
-- Policy: `EXECUTION_POLICY` can be `unrestricted`, `read-only`, or `allowlist`.
-
-Examples: `az account show`, `az group list`, `az vm list`.
-Commands are parsed without a shell and sensitive flags are redacted from logs.
+If a tool returns a device code, complete the Interactive sign-in and retry. For common
+commands and paths, see the `microsoft-cloud` skill:
+https://github.com/JackInSightsV2/Azure-M365-MCP/blob/main/skills/microsoft-cloud/SKILL.md
 """
     if str(uri) == "graph://help":
-        return """# Microsoft 365 and Entra ID tool
+        return """# Microsoft 365 and Entra ID tools
 
-Use `microsoft365_read` (GET) to read and `microsoft365_write` (POST, PUT, PATCH, DELETE)
-to change the user's Microsoft 365 (M365 / Office 365) and Entra ID (Azure AD) data through
-the Microsoft Graph API. Give a Graph v1.0 path, and for writes a method and body.
+`microsoft365_read` (GET) and `microsoft365_write` (POST, PUT, PATCH, DELETE with a JSON
+body) take a Microsoft Graph v1.0 path, for example `me`, `users`, `groups`,
+`subscribedSkus`, `me/messages`, `deviceManagement/managedDevices`, `auditLogs/signIns`.
 
-Common paths:
-- Signed-in user: `me`, `me/messages`, `me/events`, `me/drive/root/children`
-- Directory: `users`, `users/{id}`, `groups`, `groups/{id}/members`
-- Licensing: `users/{id}/licenseDetails`, `subscribedSkus`
-- Devices/Intune: `deviceManagement/managedDevices`
-- Security: `auditLogs/signIns`
-
-Writes through `microsoft365_write` require suitable application permissions.
-
-Device-code authentication is used by default. Managed identity and client-secret application
-authentication are supported for automation. `EXECUTION_POLICY=read-only` permits only GET.
+If a tool returns a device code, complete the Interactive sign-in and retry. For common
+paths and query tips, see the `microsoft-cloud` skill:
+https://github.com/JackInSightsV2/Azure-M365-MCP/blob/main/skills/microsoft-cloud/SKILL.md
 """
     raise ValueError(f"Unknown resource: {uri}")
 

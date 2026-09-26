@@ -53,6 +53,22 @@ You need:
 
 The Docker image already contains the server, Python, and Azure CLI.
 
+## Claude Code plugin
+
+In Claude Code, add this repository as a plugin marketplace and install the plugin:
+
+```text
+/plugin marketplace add JackInSightsV2/Azure-M365-MCP
+/plugin install azure-m365@azure-m365-mcp
+```
+
+The plugin provides the `azure-m365` server (started with `uvx`, so the machine needs [uv](https://docs.astral.sh/uv/)) and two skills:
+
+- `/azure-m365:setup` completes an Interactive sign-in and checks the connection with a `me` read and `az account show`.
+- `microsoft-cloud` gives the assistant common Microsoft Graph and Azure paths so calls are right first time. It loads automatically when relevant.
+
+Other clients do not support plugins; use the installer below.
+
 ## Install with one command
 
 If you have [uv](https://docs.astral.sh/uv/) installed, one command adds the server to your client's configuration. Nothing else needs installing first:
