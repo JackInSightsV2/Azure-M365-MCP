@@ -53,6 +53,48 @@ You need:
 
 The Docker image already contains the server, Python, and Azure CLI.
 
+## Claude Code plugin
+
+In Claude Code, add this repository as a plugin marketplace and install the plugin:
+
+```text
+/plugin marketplace add JackInSightsV2/Azure-M365-MCP
+/plugin install azure-m365@azure-m365-mcp
+```
+
+The plugin provides the `azure-m365` server (started with `uvx`, so the machine needs [uv](https://docs.astral.sh/uv/)) two skills, and an agent:
+
+- `/azure-m365:setup` completes an Interactive sign-in and checks the connection with a `me` read and `az account show`.
+- `microsoft-cloud` gives the assistant common Microsoft Graph and Azure paths so calls are right first time. It loads automatically when relevant.
+- `tenant-verifier` (the Verifier) has Read tools only. Before a write to Azure or to users, groups, or licences it runs a What-if (native ARM What-if for Azure deployments, otherwise a diff of the current state against the planned change) and gives a GO / CHECK verdict; afterwards it re-reads the target and confirms the change landed. The `microsoft-cloud` skill calls it around those writes, not around mail or other low-risk writes. Ask for it any time with `@agent-azure-m365:tenant-verifier`.
+
+Other clients do not support plugins; use the installer below.
+
+## Install with one command
+
+If you have [uv](https://docs.astral.sh/uv/) installed, one command adds the server to your client's configuration. Nothing else needs installing first:
+
+```bash
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp install --client cursor
+```
+
+Replace `cursor` with your client. The entry is named `azure-m365`.
+
+| `--client` | Default file written | `--scope user` writes |
+| --- | --- | --- |
+| `claude-code` | `.mcp.json` in the current directory | `~/.claude.json` |
+| `vscode` | `.vscode/mcp.json` in the current directory | your VS Code user profile's `mcp.json` |
+| `cursor` | `.cursor/mcp.json` in the current directory | `~/.cursor/mcp.json` |
+| `codex` | `~/.codex/config.toml` | (default) |
+| `claude-desktop` | `claude_desktop_config.json` in `~/Library/Application Support/Claude` (macOS), `%APPDATA%\Claude` (Windows), or `~/.config/Claude` (Linux) | (default) |
+
+- The installer adds the entry to the existing file and leaves your other settings and MCP servers as they are. It is safe to run again: an up-to-date entry is left alone, and an older one is replaced.
+- `--scope project|user` picks between the current project and your whole user account. `--dir <path>` uses a different project or home folder.
+- By default the client starts the server with `uvx`, so the machine needs `uv` and, for Azure CLI commands, the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli). Add `--launch docker` to write the Docker command from the [Quick start](#quick-start) instead.
+- If the file is not plain JSON (for example, it contains comments), the installer stops without changing it. Add the entry by hand in that case.
+
+Restart your client afterwards, then continue from [Sign in](#3-sign-in).
+
 ## Quick start
 
 ### 1. Add the server to your AI client
@@ -169,10 +211,12 @@ You do not run that command separately. The AI client runs it when required.
 
 ### 2. Restart your AI client
 
-Restart the client after saving its configuration. It should discover these two tools:
+Restart the client after saving its configuration. It should discover these tools:
 
-- `execute_azure_cli_command` for Azure;
-- `graph_command` for Microsoft 365 and Microsoft Graph.
+- `azure_read` to look up Azure resources and `azure_write` to change them;
+- `azure_find_resource` to find which subscription and resource group an Azure resource is in (needs the opt-in [Resource inventory](#resource-inventory-opt-in));
+- `microsoft365_read` to read Microsoft 365 and Entra ID through Microsoft Graph (read-only);
+- `microsoft365_write` to change Microsoft 365 and Entra ID through Microsoft Graph (your client should ask before each call).
 
 Your client may ask you to approve a tool before it runs. That approval prompt is controlled by the client, not this server.
 
@@ -180,11 +224,11 @@ Your client may ask you to approve a tool before it runs. That approval prompt i
 
 Ask the assistant:
 
-> Sign me in to Azure using the Azure CLI tool.
+> Sign me in to Azure.
 
-The assistant will return a web address and device code. Open the address, enter the code, and complete sign-in. Then retry your original request.
+A browser window opens for Microsoft sign-in, the same as `az login` or `Connect-AzAccount`. Complete sign-in, then retry your original request.
 
-Microsoft Graph may request a separate device-code sign-in the first time it is used. This is normal.
+Microsoft Graph and Azure sign in separately, so a second browser window may open the first time you use the other. This is normal. On a machine without a browser (for example the Docker image), the assistant returns a web address and device code instead; see [Sign-in and permissions](#sign-in-and-permissions).
 
 The Docker configuration uses a named volume so Azure CLI sign-in survives restarts.
 
@@ -282,19 +326,45 @@ Execution policy can only reduce access. Azure RBAC and Microsoft Graph permissi
 
 ### Normal desktop use
 
-Use device-code sign-in. No client secret is required. The server provides a code and Microsoft sign-in address when authentication is needed.
+Sign-in opens a browser window, like `az login` or `Connect-AzAccount`. No client secret is required. Microsoft Graph signs in as Microsoft Graph Command Line Tools (the app `Connect-MgGraph` uses) and Azure as Azure PowerShell (the app `Connect-AzAccount` uses).
+
+Set `SIGN_IN_FLOW=device_code` on a host without a browser (SSH sessions, containers); the server then returns a code and sign-in address instead. The Docker image sets this by default.
+
+### Microsoft Graph permissions
+
+By default the server asks Microsoft Graph only for the permissions your Tenant has already granted to Microsoft Graph Command Line Tools (`https://graph.microsoft.com/.default`), so no consent prompt appears. A request that needs a permission not yet granted returns `403` with a suggestion naming what to do.
+
+To sign in with more permissions, set `GRAPH_SCOPES` to a comma-separated list, for example:
+
+```text
+GRAPH_SCOPES=https://graph.microsoft.com/Mail.Read,https://graph.microsoft.com/Group.ReadWrite.All
+```
+
+A consent prompt then appears for any permission not yet granted. If your Tenant does not let users consent, an admin must approve it; the server never works around that.
 
 Never paste passwords, client secrets, API keys, or access tokens into an AI chat or tool command.
 
 ### Signing in only once
 
-The device-code sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. To keep the sign-in across container restarts, mount a volume at `/home/app/.IdentityService` (the configuration examples above already do this). The Docker Compose setup uses a named `identity-cache` volume for the same purpose. Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
+The sign-in is cached, so after the first sign-in the server refreshes access silently instead of prompting again. To keep the sign-in across container restarts, mount a volume at `/home/app/.IdentityService` (the configuration examples above already do this). The Docker Compose setup uses a named `identity-cache` volume for the same purpose. Set `GRAPH_TOKEN_CACHE=false` to disable caching and prompt every time.
 
 The Docker image encrypts the cached tokens at rest using a keyring (Secret Service). By default the keyring auto-unlocks; set `KEYRING_PASSWORD` (ideally from a secret store) for password-protected encryption, or `ENABLE_KEYRING=false` to store the cache as a plaintext file instead. The keyring store lives on the same `/home/app/.IdentityService` volume, so remove that volume to force a fresh sign-in. Treat the volume as sensitive regardless of mode.
 
-### When Conditional Access blocks the Azure CLI
+### When the Azure CLI is missing or cannot sign in
 
-Some tenants block the Azure CLI's application id with a Conditional Access policy, so `az login` fails even though your account is valid. In that case use the `azure_rest_request` tool, which signs in with a different, configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default) that the policy may allow. See [Tools](#tools).
+If the Azure CLI is not installed, or its sign-in fails, the Azure tools use the Azure Resource Manager REST API instead, signing in as Azure PowerShell (`AZURE_ARM_CLIENT_ID`), the same app `Connect-AzAccount` uses. Whether that sign-in is allowed is decided by your Tenant's policy. See [Tools](#tools).
+
+### Resource inventory (opt-in)
+
+`azure_find_resource` finds an Azure resource by name (its subscription, resource group, type, location, and ID) in one call. It uses a Resource inventory: a local file listing every Azure resource you can see, built from one Azure Resource Graph query and rebuilt when older than 24 hours or when a lookup finds nothing. It stores only name, type, subscription, resource group, location, and ID (no tags or properties), sits beside the token cache (`TOKEN_CACHE_DIR`, default `~/.IdentityService`), and is readable only by your user account. Microsoft 365 objects are never included.
+
+That file is a map of your whole Azure estate, so it is off by default. The `setup` skill explains the risk and turns it on only if you say yes. To do it yourself:
+
+```bash
+uvx --from git+https://github.com/JackInSightsV2/Azure-M365-MCP unified-microsoft-mcp resource-inventory on   # or: off, status
+```
+
+`off` withdraws consent and deletes the file. For Docker, run the same subcommand in the image with the identity volume mounted (`docker run --rm -v unified-microsoft-mcp-identity:/home/app/.IdentityService ghcr.io/jackinsightsv2/azure-m365-mcp:latest unified-microsoft-mcp resource-inventory on`). Setting `RESOURCE_INVENTORY=true` in the server environment also gives consent.
 
 ### Unattended or shared server
 
@@ -324,13 +394,17 @@ docker version
 
 Check that the configuration file is in the correct location and contains valid JSON or TOML. Restart the AI client after changing it.
 
-### I received a device code
+### A browser window opened, or I received a device code
 
-Open the supplied Microsoft sign-in address, enter the code, finish sign-in, and retry the request. Azure and Microsoft Graph may each request sign-in.
+Complete sign-in in the browser window, or open the supplied address and enter the code, then retry the request. Azure and Microsoft Graph may each request sign-in.
+
+### I see a "Permissions requested" consent screen
+
+The server asked Microsoft Graph for a permission your Tenant has not granted, usually because `GRAPH_SCOPES` is set. Accept it only if you are allowed to; otherwise cancel and ask an admin. Remove `GRAPH_SCOPES` to use only the permissions already granted.
 
 ### I received `AuthorizationFailed`, `Forbidden`, or `Insufficient privileges`
 
-The signed-in account does not have permission for that operation. Ask an Azure or Microsoft 365 administrator to confirm the account’s role or Graph permissions. Changing execution policy cannot add permission.
+The signed-in account, or the Microsoft Graph permissions granted in your Tenant, do not allow that operation. For Graph, the result suggests which permission to request with `GRAPH_SCOPES`. Otherwise ask an Azure or Microsoft 365 administrator to confirm the account’s role or Graph permissions. Changing execution policy cannot add permission.
 
 ### I received `Execution policy denied...`
 
@@ -348,31 +422,32 @@ docker pull ghcr.io/jackinsightsv2/azure-m365-mcp:latest
 
 ### Tools
 
-`execute_azure_cli_command` accepts an Azure CLI command beginning with `az`, for example:
+`azure_read` (the Azure Read tool) and `azure_write` (the Azure Write tool) each accept either an Azure CLI command beginning with `az` or an Azure Resource Manager REST path with the `api-version` query parameter. `azure_read` runs only read-only CLI actions (`list`, `show`, `get`, `query`, `what-if`, ...), REST `GET`, and the read-only POST queries (Resource Graph, Cost Management query, deployment What-if); anything else is rejected with a pointer to `azure_write`. The client can therefore auto-allow `azure_read` and ask before each `azure_write` call.
 
 ```text
 az account show
 az group list
 az vm list --resource-group example-rg
-```
 
-`azure_rest_request` calls the Azure Resource Manager REST API (`https://management.azure.com`) directly, without the Azure CLI binary. Use it when the Azure CLI is unavailable or its app id is blocked by Conditional Access. Include the `api-version` query parameter:
-
-```text
 command: subscriptions?api-version=2022-12-01
 method: GET
 
-command: subscriptions/{id}/resourceGroups?api-version=2021-04-01
-method: GET
+command: subscriptions/{id}/resourceGroups/example-rg?api-version=2021-04-01
+method: PUT
+data: {"location": "eastus"}
 ```
 
-Interactive sign-in for this tool uses `AZURE_ARM_CLIENT_ID` (the Azure PowerShell public client by default), which a locked-down tenant may permit even when the Azure CLI is blocked. Disable the tool with `ENABLE_AZURE_REST=false`.
+The server picks the transport. It uses the Azure CLI when it is available and falls back to the Azure Resource Manager REST API (`https://management.azure.com`) when the CLI is missing or fails, including when its sign-in is blocked by Conditional Access. A CLI command with no direct REST equivalent cannot fall back; the error then suggests an ARM path to retry with.
 
-`graph_command` accepts a Microsoft Graph v1.0 path, an HTTP method, and an optional JSON body:
+Interactive sign-in for the REST fallback uses `AZURE_ARM_CLIENT_ID` (the Azure PowerShell public client by default), which a locked-down tenant may permit even when the Azure CLI is blocked. Disable the fallback with `ENABLE_AZURE_REST=false`.
+
+`microsoft365_read` accepts a Microsoft Graph v1.0 path and only issues GET requests. `microsoft365_write` accepts a path, a POST, PUT, PATCH, or DELETE method, and an optional JSON body:
 
 ```text
+# microsoft365_read
 command: users
-method: GET
+
+# microsoft365_write
 
 command: groups/{id}
 method: PATCH

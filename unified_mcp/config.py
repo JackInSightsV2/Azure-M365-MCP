@@ -2,10 +2,10 @@
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, Literal, Optional
 
 from pydantic import Field, SecretStr, computed_field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from unified_mcp.auth import (
     AzureAuthProfile,
@@ -82,7 +82,18 @@ class Settings(BaseSettings):
     # silently instead of prompting again. Set the directory to a mounted volume to
     # keep the sign-in across container restarts.
     graph_token_cache: bool = Field(default=True, alias="GRAPH_TOKEN_CACHE")
+
+    # Interactive sign-in flow for Graph and ARM REST. "browser" opens a browser window
+    # (like az login / Connect-AzAccount); "device_code" is for hosts without a browser,
+    # such as containers, and for tenants that allow it.
+    sign_in_flow: Literal["browser", "device_code"] = Field(default="browser", alias="SIGN_IN_FLOW")
     token_cache_dir: Optional[str] = Field(default=None, alias="TOKEN_CACHE_DIR")
+
+    # Resource inventory: an opt-in local file listing every Azure resource the user can
+    # see, so azure_find_resource can locate one by name. Consent is either this setting
+    # or the consent file that ``unified-microsoft-mcp resource-inventory on`` writes
+    # beside the token cache.
+    resource_inventory: bool = Field(default=False, alias="RESOURCE_INVENTORY")
 
     # Azure Resource Manager REST access. Authenticates with a configurable public
     # client so Conditional Access policies that block the Azure CLI's own app id can
@@ -111,24 +122,12 @@ class Settings(BaseSettings):
     # Legacy naming (for backward compatibility)
     graph_client_secret: Optional[SecretStr] = Field(default=None, alias="GRAPH_CLIENT_SECRET")
 
-    # Microsoft Graph delegated scopes. Custom applications use their configured
-    # application permissions through the .default scope.
-    graph_scopes: list[str] = Field(
-        default=[
-            "https://graph.microsoft.com/User.Read",
-            "https://graph.microsoft.com/Mail.Read",
-            "https://graph.microsoft.com/Calendars.Read",
-            "https://graph.microsoft.com/Files.Read",
-            "https://graph.microsoft.com/Sites.Read.All",
-            "https://graph.microsoft.com/Team.ReadBasic.All",
-            "https://graph.microsoft.com/Channel.ReadBasic.All",
-            "https://graph.microsoft.com/User.ReadBasic.All",
-            "https://graph.microsoft.com/Group.Read.All",
-            "https://graph.microsoft.com/DeviceManagementManagedDevices.Read.All",
-            "https://graph.microsoft.com/DeviceManagementConfiguration.Read.All",
-            "https://graph.microsoft.com/DeviceManagementApps.Read.All",
-            "https://graph.microsoft.com/SecurityEvents.Read.All",
-        ],
+    # Microsoft Graph delegated scopes. The default ".default" asks only for the
+    # permissions the Tenant has already granted the client, so no consent prompt
+    # appears. Set GRAPH_SCOPES (comma-separated) to sign in with more permissions;
+    # scopes not yet granted show a consent prompt that Tenant policy may block.
+    graph_scopes: Annotated[list[str], NoDecode] = Field(
+        default=["https://graph.microsoft.com/.default"],
         alias="GRAPH_SCOPES",
     )
 
@@ -200,7 +199,7 @@ class Settings(BaseSettings):
             )
         return v_lower
 
-    @field_validator("graph_scopes")
+    @field_validator("graph_scopes", mode="before")
     @classmethod
     def validate_graph_scopes(cls, v: Any) -> list[str]:
         """Validate Microsoft Graph scopes."""
@@ -343,12 +342,15 @@ class Settings(BaseSettings):
 
         return secret.get_secret_value() if secret is not None else None
 
+    def token_cache_directory(self) -> str:
+        """Return the per-user directory that holds the token cache and sign-in records."""
+        return self.token_cache_dir or os.path.expanduser(os.path.join("~", ".IdentityService"))
+
     def _auth_record_path(self, label: str) -> str:
         """Return the file that persists a device-code sign-in for one client."""
-        directory = self.token_cache_dir or os.path.expanduser(
-            os.path.join("~", ".IdentityService")
+        return os.path.join(
+            self.token_cache_directory(), f"unified-microsoft-mcp.{label}.auth-record.json"
         )
-        return os.path.join(directory, f"unified-microsoft-mcp.{label}.auth-record.json")
 
     def get_graph_auth_profile(self) -> GraphAuthProfile:
         """Resolve Graph settings into a typed authentication profile."""
@@ -373,6 +375,7 @@ class Settings(BaseSettings):
             scopes=scopes,
             cache_enabled=self.graph_token_cache,
             auth_record_path=self._auth_record_path("graph"),
+            use_browser=self.sign_in_flow == "browser",
         )
 
     def get_arm_auth_profile(self) -> GraphAuthProfile:
@@ -402,6 +405,7 @@ class Settings(BaseSettings):
             scopes=scopes,
             cache_enabled=self.graph_token_cache,
             auth_record_path=self._auth_record_path("arm"),
+            use_browser=self.sign_in_flow == "browser",
         )
 
     def build_execution_policy(self) -> ExecutionPolicy:

@@ -164,14 +164,16 @@ async def test_openapi_execution_requires_bearer_token(docker_compose_env):
 async def assert_mcp_contract(session):
     initialization = await session.initialize()
     assert initialization.instructions
-    assert "graph_command" in initialization.instructions
+    assert "microsoft365_read" in initialization.instructions
     tools = await session.list_tools()
     assert {tool.name for tool in tools.tools} == {
-        "execute_azure_cli_command",
-        "azure_rest_request",
-        "graph_command",
+        "azure_read",
+        "azure_write",
+        "azure_find_resource",
+        "microsoft365_read",
+        "microsoft365_write",
     }
-    result = await session.call_tool("graph_command", {"command": "me"})
+    result = await session.call_tool("microsoft365_read", {"command": "me"})
     assert result.isError is not True
     assert result.content
     assert "Mock User" in result.content[0].text
@@ -221,13 +223,15 @@ async def test_stdio_mcp_tool_call(docker_compose_env):
             await session.initialize()
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {
-                "execute_azure_cli_command",
-                "azure_rest_request",
-                "graph_command",
+                "azure_read",
+                "azure_write",
+                "azure_find_resource",
+                "microsoft365_read",
+                "microsoft365_write",
             }
 
             result = await session.call_tool(
-                "execute_azure_cli_command",
+                "azure_read",
                 {"command": "az account show"},
             )
 

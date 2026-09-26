@@ -10,6 +10,7 @@ import sys
 
 from unified_mcp.application import ToolApplication, process_tool_call
 from unified_mcp.config import Settings
+from unified_mcp.resource_inventory import ResourceInventory
 from unified_mcp.services.azure_cli_service import AzureCliService
 from unified_mcp.services.azure_rest_service import AzureRestService
 from unified_mcp.services.graph_service import GraphService
@@ -70,6 +71,7 @@ def build_application(settings: Settings) -> ToolApplication:
             FakeAzureCliService(),
             FakeGraphService(),
             FakeAzureRestService(),
+            ResourceInventory.from_settings(settings),
         )
 
     policy = settings.build_execution_policy()
@@ -78,6 +80,7 @@ def build_application(settings: Settings) -> ToolApplication:
         AzureCliService(settings, policy=policy),
         GraphService(settings, policy=policy),
         arm_service,
+        ResourceInventory.from_settings(settings),
     )
 
 
@@ -116,7 +119,15 @@ async def main() -> None:
 
 
 def run() -> None:
-    """Run the asynchronous server from console-script and module entry points."""
+    """Run the server, or the ``install`` / ``resource-inventory`` subcommand when given."""
+    if len(sys.argv) > 1 and sys.argv[1] == "install":
+        from unified_mcp.installer import main as install_main
+
+        sys.exit(install_main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == "resource-inventory":
+        from unified_mcp.resource_inventory import main as inventory_main
+
+        sys.exit(inventory_main(sys.argv[2:]))
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

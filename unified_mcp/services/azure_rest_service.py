@@ -16,9 +16,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from unified_mcp.auth import TokenBroker
+from unified_mcp.auth import TokenBroker, pending_sign_in_response
 from unified_mcp.config import Settings
 from unified_mcp.execution_policy import ExecutionPolicy
+from unified_mcp.tenant_policy import detect_tenant_policy_refusal, tenant_policy_response
 
 ARM_BASE_URL = "https://management.azure.com/"
 
@@ -113,6 +114,11 @@ class AzureRestService:
             return self._device_auth_response()
         except Exception as error:
             self.logger.error("Azure Resource Manager authentication failed: %s", error)
+            refusal = detect_tenant_policy_refusal(error, self.auth_profile.client_id)
+            if refusal is not None:
+                # The pending device code is spent; do not show it again.
+                self.device_code_info = None
+                return tenant_policy_response(refusal, str(error))
             if self.device_code_info:
                 return self._device_auth_response()
             return {
@@ -148,6 +154,9 @@ class AzureRestService:
 
     def _device_auth_response(self) -> Dict[str, Any]:
         info = self.device_code_info
+        browser = pending_sign_in_response(self.auth_profile)
+        if not info and browser is not None:
+            return browser
         if not info:
             return {
                 "success": False,

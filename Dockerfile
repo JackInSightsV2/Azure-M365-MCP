@@ -70,6 +70,7 @@ ENV LOG_LEVEL=INFO \
     XDG_RUNTIME_DIR=/tmp/runtime-app \
     XDG_DATA_HOME=/home/app/.IdentityService/xdg-data \
     ENABLE_KEYRING=true \
+    SIGN_IN_FLOW=device_code \
     MCP_TRANSPORT=stdio \
     MCP_HOST=0.0.0.0 \
     MCP_PORT=8001

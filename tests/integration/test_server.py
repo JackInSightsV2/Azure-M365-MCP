@@ -12,7 +12,7 @@ async def test_handle_azure_cli_tool(mock_azure_cli_service):
 
     # Successful call
     result = await process_tool_call(
-        "execute_azure_cli_command", {"command": "az account list"}, mock_azure_cli_service, None
+        "azure_read", {"command": "az account list"}, mock_azure_cli_service, None
     )
 
     assert len(result) == 1
@@ -20,14 +20,12 @@ async def test_handle_azure_cli_tool(mock_azure_cli_service):
     mock_azure_cli_service.execute_azure_cli.assert_called_with("az account list")
 
     # Missing command
-    result = await process_tool_call("execute_azure_cli_command", {}, mock_azure_cli_service, None)
+    result = await process_tool_call("azure_read", {}, mock_azure_cli_service, None)
     assert "Error: Missing command argument" in result[0].text
 
     # Service not initialized
-    result = await process_tool_call(
-        "execute_azure_cli_command", {"command": "az login"}, None, None
-    )
-    assert "Error: Azure CLI service not initialized" in result[0].text
+    result = await process_tool_call("azure_read", {"command": "az login"}, None, None)
+    assert "Error: Azure is not available" in result[0].text
 
 
 @pytest.mark.asyncio
@@ -38,7 +36,9 @@ async def test_handle_graph_tool(mock_graph_service):
     )
 
     # Successful call
-    result = await process_tool_call("graph_command", {"command": "me"}, None, mock_graph_service)
+    result = await process_tool_call(
+        "microsoft365_read", {"command": "me"}, None, mock_graph_service
+    )
 
     assert len(result) == 1
     assert "Success" in result[0].text
@@ -50,7 +50,9 @@ async def test_handle_graph_tool(mock_graph_service):
         return_value={"success": False, "error": "Failed", "status_code": 404}
     )
 
-    result = await process_tool_call("graph_command", {"command": "me"}, None, mock_graph_service)
+    result = await process_tool_call(
+        "microsoft365_read", {"command": "me"}, None, mock_graph_service
+    )
     assert "Error" in result[0].text
     assert "Failed" in result[0].text
 

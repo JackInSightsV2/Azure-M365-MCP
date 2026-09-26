@@ -156,3 +156,24 @@ def test_graph_device_profile_carries_cache_settings(monkeypatch):
     assert profile.kind == "device_code"
     assert profile.cache_enabled is False
     assert profile.auth_record_path.endswith("graph.auth-record.json")
+
+
+def test_graph_default_scope_uses_existing_tenant_grants(monkeypatch):
+    monkeypatch.delenv("GRAPH_SCOPES", raising=False)
+
+    assert Settings().graph_scopes == ["https://graph.microsoft.com/.default"]
+    assert Settings(GRAPH_SCOPES="https://graph.microsoft.com/Mail.Read").graph_scopes == [
+        "https://graph.microsoft.com/Mail.Read"
+    ]
+
+
+def test_graph_scopes_env_accepts_comma_separated(monkeypatch):
+    monkeypatch.setenv(
+        "GRAPH_SCOPES",
+        "https://graph.microsoft.com/User.Read,https://graph.microsoft.com/Mail.Read",
+    )
+
+    assert Settings().graph_scopes == [
+        "https://graph.microsoft.com/User.Read",
+        "https://graph.microsoft.com/Mail.Read",
+    ]

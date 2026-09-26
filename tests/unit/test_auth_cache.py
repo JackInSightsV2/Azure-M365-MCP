@@ -86,3 +86,35 @@ async def test_non_device_profile_skips_persistence():
         auth_module.save_auth_record = original
 
     assert saved == []
+
+
+def test_browser_flow_is_default_for_user_sign_in(monkeypatch):
+    from unified_mcp.auth import DeviceCodeProfile, TokenBroker
+    from unified_mcp.config import Settings
+
+    monkeypatch.delenv("SIGN_IN_FLOW", raising=False)
+    settings = Settings()
+    for profile in (settings.get_graph_auth_profile(), settings.get_arm_auth_profile()):
+        assert isinstance(profile, DeviceCodeProfile)
+        assert profile.use_browser is True
+        credential = TokenBroker(profile, lambda *_: None)._create_credential(
+            profile, lambda *_: None
+        )
+        assert type(credential).__name__ == "InteractiveBrowserCredential"
+
+
+def test_device_code_flow_is_selectable(monkeypatch):
+    from unified_mcp.config import Settings
+
+    settings = Settings(SIGN_IN_FLOW="device_code")
+    assert settings.get_graph_auth_profile().use_browser is False
+    assert settings.get_arm_auth_profile().use_browser is False
+
+
+def test_pending_browser_sign_in_says_to_finish_in_browser():
+    from unified_mcp.auth import DeviceCodeProfile, pending_sign_in_response
+
+    profile = DeviceCodeProfile("organizations", "client", ("scope",), use_browser=True)
+    response = pending_sign_in_response(profile)
+    assert response is not None and "browser window" in response["instructions"]
+    assert pending_sign_in_response(DeviceCodeProfile("t", "c", ("s",))) is None
