@@ -1,4 +1,4 @@
-"""Deterministic external-service fakes for local and container contract tests."""
+"""Deterministic external-service fakes for local contract tests."""
 
 from __future__ import annotations
 

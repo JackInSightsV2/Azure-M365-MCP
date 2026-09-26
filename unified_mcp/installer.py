@@ -27,7 +27,6 @@ from tomlkit.exceptions import TOMLKitError
 
 SERVER_NAME = "azure-m365"
 REPOSITORY_URL = "https://github.com/JackInSightsV2/Azure-M365-MCP"
-DOCKER_IMAGE = "ghcr.io/jackinsightsv2/azure-m365-mcp:latest"
 CONSOLE_SCRIPT = "unified-microsoft-mcp"
 
 CLIENTS = ("claude-code", "vscode", "cursor", "codex", "claude-desktop")
@@ -38,13 +37,6 @@ class Scope(str, Enum):
 
     PROJECT = "project"
     USER = "user"
-
-
-class Launch(str, Enum):
-    """How the client starts the server."""
-
-    UVX = "uvx"
-    DOCKER = "docker"
 
 
 DEFAULT_SCOPES: dict[str, Scope] = {
@@ -68,19 +60,8 @@ class InstallResult:
     changed: bool
 
 
-def launch_command(launch: Launch = Launch.UVX) -> tuple[str, list[str]]:
-    """Return the command and arguments a client runs to start the server."""
-    if launch is Launch.DOCKER:
-        return "docker", [
-            "run",
-            "--rm",
-            "-i",
-            "-v",
-            "unified-microsoft-mcp-azure:/home/app/.azure",
-            "-v",
-            "unified-microsoft-mcp-identity:/home/app/.IdentityService",
-            DOCKER_IMAGE,
-        ]
+def launch_command() -> tuple[str, list[str]]:
+    """Return the ``uvx`` command and arguments a client runs to start the server."""
     return "uvx", ["--from", f"git+{REPOSITORY_URL}", CONSOLE_SCRIPT]
 
 
@@ -116,9 +97,9 @@ def config_path(client: str, base_dir: Path, scope: Scope, platform: str = sys.p
     raise InstallError(f"Unknown client '{client}'. Choose one of: {', '.join(CLIENTS)}")
 
 
-def server_entry(client: str, launch: Launch = Launch.UVX) -> dict[str, Any]:
+def server_entry(client: str) -> dict[str, Any]:
     """Return the server entry in the shape ``client`` expects."""
-    command, args = launch_command(launch)
+    command, args = launch_command()
     entry: dict[str, Any] = {"command": command, "args": args}
     if client in ("claude-code", "vscode"):
         entry = {"type": "stdio", **entry}
@@ -200,7 +181,6 @@ def install(
     client: str,
     base_dir: Path,
     scope: Optional[Scope] = None,
-    launch: Launch = Launch.UVX,
     platform: str = sys.platform,
 ) -> InstallResult:
     """Merge the ``azure-m365`` entry into ``client``'s configuration under ``base_dir``."""
@@ -208,7 +188,7 @@ def install(
         raise InstallError(f"Unknown client '{client}'. Choose one of: {', '.join(CLIENTS)}")
     resolved_scope = scope or DEFAULT_SCOPES[client]
     path = config_path(client, Path(base_dir), resolved_scope, platform)
-    entry = server_entry(client, launch)
+    entry = server_entry(client)
     if client == "codex":
         changed = _merge_toml(path, _servers_key(client), entry)
     else:
@@ -234,12 +214,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Override the base directory (project root or home directory).",
     )
-    parser.add_argument(
-        "--launch",
-        choices=[launch.value for launch in Launch],
-        default=Launch.UVX.value,
-        help="How the client starts the server (default: uvx).",
-    )
     return parser
 
 
@@ -248,7 +222,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     scope = Scope(arguments.scope) if arguments.scope else DEFAULT_SCOPES[arguments.client]
     base_dir = arguments.dir or (Path.cwd() if scope is Scope.PROJECT else Path.home())
     try:
-        result = install(arguments.client, base_dir, scope, Launch(arguments.launch))
+        result = install(arguments.client, base_dir, scope)
     except InstallError as error:
         print(f"Install failed: {error}", file=sys.stderr)
         return 1
