@@ -163,7 +163,7 @@ async def test_azure_cli_tool_returns_plain_message_on_policy_refusal():
     cli = AzureCliService(Settings(), runner=runner)
     app = ToolApplication(cli, FakeGraphService(), FakeAzureRestService())
 
-    result = await app.execute_tool("azure_read", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az group list"})
 
     assert result.is_error is True
     assert result.text.startswith("Error: Sign-in was refused")
@@ -181,7 +181,7 @@ async def test_azure_cli_tool_explains_failed_device_login():
     cli.login_handler.last_login_error = f"{CONSENT_ERROR}"
     app = ToolApplication(cli, FakeGraphService(), FakeAzureRestService())
 
-    result = await app.execute_tool("azure_read", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az group list"})
 
     assert result.is_error is True
     assert "AADSTS65001" in result.text
@@ -201,7 +201,7 @@ async def test_azure_cli_service_principal_refusal_names_configured_app():
         AzureCliService(settings, runner=runner), FakeGraphService(), FakeAzureRestService()
     )
 
-    result = await app.execute_tool("azure_read", {"command": "az account show"})
+    result = await app.execute_tool("azure_read", {"command": "az group list"})
 
     assert result.is_error is True
     assert "client ID sp-client" in result.text
