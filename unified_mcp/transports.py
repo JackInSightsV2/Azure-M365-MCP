@@ -196,7 +196,7 @@ def create_openapi_app(settings: Settings, application: ToolApplication) -> ASGI
     @app.post("/execute-azure-cli", response_model=AzureCliResponse)
     async def execute_azure_cli(request: AzureCliRequest) -> AzureCliResponse:
         execution = await application.execute_tool(
-            "execute_azure_cli_command",
+            "azure_write",
             request.model_dump(),
         )
         payload = execution.payload

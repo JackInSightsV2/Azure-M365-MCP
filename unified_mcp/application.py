@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shlex
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol
 
 from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, ValidationError
+
+from unified_mcp.execution_policy import ExecutionPolicy, ExecutionPolicyMode
 
 SERVER_INSTRUCTIONS = (
     "This server connects to the user's Microsoft cloud: Microsoft 365 (also called M365 "
@@ -23,11 +27,13 @@ SERVER_INSTRUCTIONS = (
     "- microsoft365_write: change Microsoft 365 and Entra ID (Azure AD) via the Microsoft "
     "Graph API (POST/PUT/PATCH/DELETE). Create or update users, groups, licence/license "
     "assignments, send mail, manage calendar, Teams, and files.\n"
-    "- execute_azure_cli_command: Microsoft Azure resources via the Azure CLI (commands "
-    "begin with 'az') — subscriptions, resource groups, virtual machines, storage, "
-    "networking, costs.\n"
-    "- azure_rest_request: the same Azure resources via the Azure Resource Manager REST "
-    "API, for when the Azure CLI is unavailable or blocked by Conditional Access.\n\n"
+    "- azure_read: read Microsoft Azure resources — subscriptions, resource groups, "
+    "virtual machines, storage, networking, role assignments, costs. Pass an Azure CLI "
+    "command (begins with 'az') or an Azure Resource Manager REST path; the server uses "
+    "the Azure CLI and falls back to ARM REST when the CLI is unavailable or blocked by "
+    "Conditional Access.\n"
+    "- azure_write: create, change, or delete the same Azure resources, with the same "
+    "inputs and fallback.\n\n"
     "Prefer read operations, inspect the help resources before unfamiliar actions, and "
     "never place credentials in tool arguments. Authentication prompts may require the "
     "user to complete a device sign-in and retry."
@@ -72,11 +78,20 @@ class RestExecutor(Protocol):
     async def close(self) -> None: ...
 
 
-class AzureToolInput(BaseModel):
-    """Typed Azure CLI tool input."""
+AZURE_READ_TOOL = "azure_read"
+AZURE_WRITE_TOOL = "azure_write"
+ARM_BASE_URL = "https://management.azure.com/"
 
-    command: str = Field(min_length=1)
-    model_config = ConfigDict(extra="forbid")
+# Azure CLI commands with a direct ARM REST equivalent, keyed by command path (the
+# non-flag tokens after 'az'). Anything else cannot fall back and asks for an ARM path.
+_CLI_TO_ARM_PATHS: Dict[tuple[str, ...], str] = {
+    ("account", "list"): "subscriptions?api-version=2022-12-01",
+}
+_ARM_PATH_HINT = (
+    "Retry with an Azure Resource Manager REST path instead, for example "
+    "'subscriptions?api-version=2022-12-01' or "
+    "'subscriptions/{id}/resourceGroups?api-version=2021-04-01'."
+)
 
 
 class GraphToolInput(BaseModel):
@@ -88,8 +103,8 @@ class GraphToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AzureRestToolInput(BaseModel):
-    """Typed Azure Resource Manager REST tool input."""
+class AzureToolInput(BaseModel):
+    """Typed Azure Read/Write tool input: an Azure CLI command or an ARM REST path."""
 
     command: str = Field(min_length=1)
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
@@ -126,42 +141,14 @@ class ToolApplication:
         name: str,
         arguments: Dict[str, Any],
     ) -> ToolExecutionResult:
-        if name == "execute_azure_cli_command":
-            if self.azure_service is None:
-                return self._error(name, "Azure CLI service not initialized")
+        if name in (AZURE_READ_TOOL, AZURE_WRITE_TOOL):
             try:
-                request = AzureToolInput.model_validate(arguments)
+                azure_request = AzureToolInput.model_validate(arguments)
             except ValidationError as error:
                 return self._error(name, self._validation_message(error))
-            payload = await self.azure_service.execute_azure_cli(request.command)
-            is_error = payload.startswith("Error:") or "\nError:" in payload
-            return ToolExecutionResult(name, payload, payload, is_error)
-
-        if name == "azure_rest_request":
-            if self.arm_service is None:
-                return self._error(name, "Azure REST service not enabled")
-            try:
-                arm_request = AzureRestToolInput.model_validate(arguments)
-            except ValidationError as error:
-                return self._error(name, self._validation_message(error))
-            arm_payload = await self.arm_service.execute_command(
-                arm_request.command,
-                arm_request.method,
-                arm_request.data,
-            )
-            return ToolExecutionResult(
-                name,
-                arm_payload,
-                self._format_graph(
-                    GraphToolInput(
-                        command=arm_request.command,
-                        method=arm_request.method,
-                        data=arm_request.data,
-                    ),
-                    arm_payload,
-                ),
-                not bool(arm_payload.get("success")),
-            )
+            if self._is_cli_command(azure_request.command):
+                return await self._execute_azure_cli(name, azure_request)
+            return await self._execute_azure_rest(name, azure_request)
 
         if name in (MICROSOFT365_READ, MICROSOFT365_WRITE):
             if self.graph_service is None:
@@ -194,6 +181,113 @@ class ToolApplication:
             )
 
         return self._error(name, f"Unknown tool: {name}")
+
+    async def _execute_azure_cli(self, name: str, request: AzureToolInput) -> ToolExecutionResult:
+        """Run an Azure CLI command, falling back to ARM REST when the CLI is absent or fails."""
+        if request.data is not None or request.method != "GET":
+            return self._error(
+                name, "method and data apply only to Azure Resource Manager REST paths"
+            )
+        if name == AZURE_READ_TOOL:
+            decision = ExecutionPolicy(ExecutionPolicyMode.READ_ONLY).check_azure(request.command)
+            if not decision.allowed:
+                return self._error(
+                    name,
+                    f"{AZURE_READ_TOOL} only runs read-only Azure CLI commands "
+                    f"(list, show, get, ...). Use {AZURE_WRITE_TOOL} for this command.",
+                )
+
+        cli_error: str | None = None
+        if self.azure_service is not None:
+            payload = await self.azure_service.execute_azure_cli(request.command)
+            if not self._is_cli_error(payload):
+                return ToolExecutionResult(name, payload, payload, False)
+            if "Execution policy denied" in payload or self.arm_service is None:
+                return ToolExecutionResult(name, payload, payload, True)
+            cli_error = payload
+
+        if self.arm_service is None:
+            return self._error(name, "Azure is not available: no Azure CLI or ARM REST service")
+
+        arm_path = self._cli_to_arm_path(request.command)
+        if arm_path is None:
+            reason = cli_error or "Error: Azure CLI service not available"
+            message = (
+                f"{reason}\n\nThis Azure CLI command has no direct Azure Resource Manager "
+                f"REST equivalent. {_ARM_PATH_HINT}"
+            )
+            return ToolExecutionResult(name, {"success": False, "error": message}, message, True)
+        return await self._execute_azure_rest(
+            name, AzureToolInput(command=arm_path), prefer_cli=False
+        )
+
+    async def _execute_azure_rest(
+        self,
+        name: str,
+        request: AzureToolInput,
+        *,
+        prefer_cli: bool = True,
+    ) -> ToolExecutionResult:
+        """Call Azure Resource Manager REST, or 'az rest' when only the CLI is available."""
+        if name == AZURE_READ_TOOL and request.method != "GET":
+            return self._error(
+                name,
+                f"{AZURE_READ_TOOL} only sends GET requests. "
+                f"Use {AZURE_WRITE_TOOL} for {request.method}.",
+            )
+        if self.arm_service is None:
+            if not prefer_cli or self.azure_service is None:
+                return self._error(name, "Azure is not available: no Azure CLI or ARM REST service")
+            payload = await self.azure_service.execute_azure_cli(self._az_rest_command(request))
+            return ToolExecutionResult(name, payload, payload, self._is_cli_error(payload))
+
+        arm_payload = await self.arm_service.execute_command(
+            request.command,
+            request.method,
+            request.data,
+        )
+        return ToolExecutionResult(
+            name,
+            arm_payload,
+            self._format_graph(
+                GraphToolInput(command=request.command, method=request.method, data=request.data),
+                arm_payload,
+            ),
+            not bool(arm_payload.get("success")),
+        )
+
+    @staticmethod
+    def _split(command: str) -> list[str]:
+        try:
+            return shlex.split(command, posix=os.name != "nt")
+        except ValueError:
+            return command.split()
+
+    @classmethod
+    def _is_cli_command(cls, command: str) -> bool:
+        arguments = cls._split(command)
+        return bool(arguments) and arguments[0].lower() == "az"
+
+    @staticmethod
+    def _is_cli_error(payload: str) -> bool:
+        return payload.startswith("Error:") or "\nError:" in payload
+
+    @classmethod
+    def _cli_to_arm_path(cls, command: str) -> str | None:
+        command_path: list[str] = []
+        for argument in cls._split(command)[1:]:
+            if argument.startswith("-"):
+                break
+            command_path.append(argument.lower())
+        return _CLI_TO_ARM_PATHS.get(tuple(command_path))
+
+    @staticmethod
+    def _az_rest_command(request: AzureToolInput) -> str:
+        url = ARM_BASE_URL + request.command.lstrip("/")
+        command = f"az rest --method {request.method.lower()} --url {shlex.quote(url)}"
+        if request.data is not None:
+            command += f" --body {shlex.quote(json.dumps(request.data))}"
+        return command
 
     @staticmethod
     def _validation_message(error: ValidationError) -> str:
@@ -240,66 +334,78 @@ class ToolApplication:
             raise errors[0]
 
 
+def _azure_input_schema(*, read_only: bool) -> Dict[str, Any]:
+    """Shared input schema for the Azure Read and Write tools."""
+    method_description = (
+        "REST paths only. azure_read sends GET; use azure_write for other methods"
+        if read_only
+        else "REST paths only. GET reads; POST, PUT, PATCH, DELETE write"
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Azure CLI command beginning with 'az' (for example 'az group list'), "
+                    "or an Azure Resource Manager path including the api-version query "
+                    "parameter (for example 'subscriptions?api-version=2022-12-01')"
+                ),
+            },
+            "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                "default": "GET",
+                "description": method_description,
+            },
+            "data": {"type": "object", "description": "JSON body for REST write requests"},
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    }
+
+
 def create_tools() -> list[Tool]:
     """Return the canonical tool schemas exposed by every MCP transport."""
     return [
         Tool(
-            name="execute_azure_cli_command",
+            name=AZURE_READ_TOOL,
             description=(
-                "Inspect and manage Microsoft Azure resources by running Azure CLI commands "
-                "(must begin with 'az'). Use for Azure subscriptions, resource groups, virtual "
-                "machines, storage accounts, networking, role assignments, and cost data. "
-                "Examples: 'az account show', 'az group list', 'az vm list -o table'. Subject "
-                "to the configured execution policy."
+                "Read the user's Microsoft Azure resources: subscriptions, resource groups, "
+                "virtual machines, storage accounts, networking, role assignments, and cost "
+                "data. Pass either an Azure CLI command (begins with 'az', read-only actions "
+                "such as list, show, get) or an Azure Resource Manager REST path with the "
+                "api-version query parameter (GET only). The server uses the Azure CLI and "
+                "falls back to ARM REST automatically when the CLI is unavailable or blocked by "
+                "Conditional Access. Examples: 'az account show', 'az vm list -o table', "
+                "'subscriptions?api-version=2022-12-01'. Use azure_write for changes."
             ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": (
-                            "Azure CLI command beginning with 'az', for example "
-                            "'az account show' or 'az group list'"
-                        ),
-                    }
-                },
-                "required": ["command"],
-                "additionalProperties": False,
-            },
+            inputSchema=_azure_input_schema(read_only=True),
+            annotations=ToolAnnotations(
+                title="Read Azure resources",
+                readOnlyHint=True,
+                destructiveHint=False,
+            ),
         ),
         Tool(
-            name="azure_rest_request",
+            name=AZURE_WRITE_TOOL,
             description=(
-                "Inspect and manage Microsoft Azure resources through the Azure Resource "
-                "Manager REST API (https://management.azure.com), without the Azure CLI. Use "
-                "this when the Azure CLI is unavailable or blocked by Conditional Access, or "
-                "for ARM endpoints the CLI does not cover — subscriptions, resource groups, "
-                "resources, deployments, role assignments, and costs. Include the api-version "
-                "query parameter. Example: 'subscriptions?api-version=2022-12-01'. GET reads; "
-                "POST/PUT/PATCH/DELETE write."
+                "Create, change, or delete the user's Microsoft Azure resources: "
+                "subscriptions, resource groups, virtual machines, storage accounts, "
+                "networking, role assignments, and cost settings. Pass either an Azure CLI "
+                "command (begins with 'az', for example 'az group create ...') or an Azure "
+                "Resource Manager REST path with the api-version query parameter plus a "
+                "method (POST, PUT, PATCH, DELETE) and JSON body. The server uses the Azure "
+                "CLI and falls back to ARM REST automatically when the CLI is unavailable or "
+                "blocked by Conditional Access. Subject to the configured execution policy."
             ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": (
-                            "Azure Resource Manager path including the api-version query "
-                            "parameter, for example 'subscriptions?api-version=2022-12-01'"
-                        ),
-                    },
-                    "method": {
-                        "type": "string",
-                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-                        "default": "GET",
-                    },
-                    "data": {"type": "object", "description": "Body for write requests"},
-                },
-                "required": ["command"],
-                "additionalProperties": False,
-            },
+            inputSchema=_azure_input_schema(read_only=False),
+            annotations=ToolAnnotations(
+                title="Change Azure resources",
+                readOnlyHint=False,
+                destructiveHint=True,
+            ),
         ),
         Tool(
             name=MICROSOFT365_READ,
@@ -376,8 +482,8 @@ def create_resources() -> list[Resource]:
     return [
         Resource(
             uri=AnyUrl("azure://help"),
-            name="Azure CLI Help",
-            description="Authentication, policy, and Azure CLI examples",
+            name="Azure Help",
+            description="Subscriptions, resource groups, VMs — auth, policy, and examples",
             mimeType="text/markdown",
         ),
         Resource(
@@ -392,9 +498,18 @@ def create_resources() -> list[Resource]:
 def read_resource(uri: AnyUrl) -> str:
     """Read a canonical help resource."""
     if str(uri) == "azure://help":
-        return """# Azure CLI tool
+        return """# Azure tools
 
-Use `execute_azure_cli_command` with a command beginning with `az`.
+Use `azure_read` to look things up and `azure_write` to make changes. Each accepts an
+Azure CLI command beginning with `az` or an Azure Resource Manager REST path with an
+`api-version` query parameter (plus `method` and `data` for REST writes).
+
+The server runs the Azure CLI when it is available and falls back to Azure Resource
+Manager REST when the CLI is missing or its sign-in fails (for example when Conditional
+Access blocks it). ARM REST signs in with a configurable public client
+(`AZURE_ARM_CLIENT_ID`, Azure PowerShell by default). CLI commands without a direct REST
+equivalent cannot fall back; pass an ARM path such as
+`subscriptions?api-version=2022-12-01` instead.
 
 - Interactive: call `az login` and complete the device flow.
 - Automation: configure service-principal credentials or managed identity.
@@ -402,11 +517,6 @@ Use `execute_azure_cli_command` with a command beginning with `az`.
 
 Examples: `az account show`, `az group list`, `az vm list`.
 Commands are parsed without a shell and sensitive flags are redacted from logs.
-
-If the Azure CLI is unavailable or blocked by Conditional Access, use
-`azure_rest_request` instead. It calls Azure Resource Manager REST directly and signs
-in with a configurable public client (`AZURE_ARM_CLIENT_ID`, Azure PowerShell by
-default). Example path: `subscriptions?api-version=2022-12-01`.
 """
     if str(uri) == "graph://help":
         return """# Microsoft 365 and Entra ID tool

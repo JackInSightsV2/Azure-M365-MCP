@@ -7,9 +7,18 @@ from typing import Any, Dict, Optional
 
 
 class FakeAzureCliService:
-    """Azure CLI adapter with no subprocess or authentication side effects."""
+    """Azure CLI adapter with no subprocess or authentication side effects.
+
+    Pass ``failure`` to simulate a CLI that is broken or whose sign-in is refused: every
+    command then returns that text as an ``Error:`` result, as the real service does.
+    """
+
+    def __init__(self, failure: Optional[str] = None) -> None:
+        self.failure = failure
 
     async def execute_azure_cli(self, command: str) -> str:
+        if self.failure is not None:
+            return f"Error: {self.failure}"
         if command.startswith("az login"):
             return json.dumps(
                 [
